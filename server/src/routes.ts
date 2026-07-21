@@ -62,7 +62,7 @@ for (const [route, cfg] of Object.entries(dicts)) {
 }
 
 // ---------- Экраны ----------
-const SCREEN_FIELDS = ['code','name','address','city_id','lat','lng','width_m','height_m','res_w','res_h','pixel_pitch',
+const SCREEN_FIELDS = ['code','name','side','address','city_id','lat','lng','width_m','height_m','res_w','res_h','pixel_pitch',
   'brightness','screen_type_id','orientation','loop_duration_sec','work_from','work_to','price_per_play','price_per_sec',
   'tax_regime_id','owner_id','status','tags','comment'];
 
@@ -129,26 +129,90 @@ api.get('/screens/:id/availability', (req, res) => {
   res.json(load);
 });
 
-// Расписание занятости: все активные слоты экрана за период + посуточная загрузка петли
+// Расписание занятости за год: строки-клиенты с полосами по месяцам + пиковая загрузка петли по клиентам
 api.get('/screens/:id/schedule', (req, res) => {
   expireReservations();
-  const from = String(req.query.from ?? new Date().toISOString().slice(0, 10));
-  const to = String(req.query.to ?? from);
-  const load = loopLoad(Number(req.params.id), from, to);
-  if (!load) return res.status(404).json({ error: 'Экран не найден' });
+  const id = Number(req.params.id);
+  const screen = db.prepare('SELECT id, loop_duration_sec FROM screens WHERE id = ? AND tenant_id = ?')
+    .get(id, tenantOf(req)) as { id: number; loop_duration_sec: number } | undefined;
+  if (!screen) return res.status(404).json({ error: 'Экран не найден' });
+  const year = Number(req.query.year) || new Date().getFullYear();
+  const yFrom = `${year}-01-01`, yTo = `${year}-12-31`;
+
+  // Все брони/продажи, пересекающиеся с годом (для сетки по месяцам)
   const slots = db.prepare(`
     SELECT s.id, s.campaign_id, s.duration_sec, s.plays_per_day, s.date_from, s.date_to,
-           c.number AS campaign_number, c.status, cl.name AS client_name,
-           ts.name AS time_slot_name, cr.filename AS creative_name
+           c.number AS campaign_number, c.status, c.client_id, cl.name AS client_name,
+           ts.name AS time_slot_name
     FROM ad_slots s
     JOIN campaigns c ON c.id = s.campaign_id
     LEFT JOIN clients cl ON cl.id = c.client_id
     LEFT JOIN time_slots ts ON ts.id = s.time_slot_id
-    LEFT JOIN creatives cr ON cr.id = s.creative_id
     WHERE s.screen_id = ? AND c.status IN ('reserved','sold') AND s.date_from <= ? AND s.date_to >= ?
     ORDER BY cl.name, s.date_from
-  `).all(req.params.id, to, from);
-  res.json({ load, slots });
+  `).all(id, yTo, yFrom) as any[];
+
+  // Пиковый день: максимум одновременно занятых секунд петли за год
+  let peakDate = yFrom, peakUsed = -1, peakSlots: any[] = [];
+  const d = new Date(yFrom + 'T00:00:00'), end = new Date(yTo + 'T00:00:00');
+  for (let i = 0; d <= end && i < 366; i++) {
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const active = slots.filter((s) => s.date_from <= iso && s.date_to >= iso);
+    const used = active.reduce((a, s) => a + s.duration_sec, 0);
+    if (used > peakUsed) { peakUsed = used; peakDate = iso; peakSlots = active; }
+    d.setDate(d.getDate() + 1);
+  }
+  if (peakUsed < 0) peakUsed = 0;
+
+  res.json({
+    loop_duration_sec: screen.loop_duration_sec,
+    year,
+    slots,
+    peak: {
+      date: peakDate,
+      used_sec: peakUsed,
+      free_sec: Math.max(0, screen.loop_duration_sec - peakUsed),
+      segments: peakSlots.map((s) => ({
+        client_name: s.client_name ?? 'Без клиента',
+        duration_sec: s.duration_sec,
+        campaign_id: s.campaign_id,
+        status: s.status,
+      })),
+    },
+  });
+});
+
+// Быстрое бронирование клиента на экране (из окна занятости): создаёт кампанию-бронь + слот
+api.post('/screens/:id/book', (req, res) => {
+  const t = tenantOf(req);
+  const id = Number(req.params.id);
+  const screen = db.prepare('SELECT id FROM screens WHERE id = ? AND tenant_id = ?').get(id, t);
+  if (!screen) return res.status(404).json({ error: 'Экран не найден' });
+  const { client_id, date_from, date_to, duration_sec, plays_per_day, time_slot_id } = req.body ?? {};
+  if (!client_id || !date_from || !date_to || !duration_sec) {
+    return res.status(400).json({ error: 'Обязательные поля: клиент, период, длительность ролика' });
+  }
+  if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
+
+  const check = checkCapacity(id, date_from, date_to, Number(duration_sec));
+  if (!check.ok) return res.status(409).json({ error: check.reason });
+
+  const year = new Date().getFullYear();
+  const last = db.prepare(`SELECT COUNT(*) c FROM campaigns WHERE tenant_id = ? AND number LIKE ?`).get(t, `${year}-%`) as any;
+  const number = `${year}-${String(last.c + 1).padStart(3, '0')}`;
+  const campId = db.prepare(`
+    INSERT INTO campaigns (tenant_id, number, client_id, status, reserve_until) VALUES (?,?,?,'reserved',NULL)
+  `).run(t, number, client_id).lastInsertRowid as number;
+
+  const calc = calcPrice({
+    screen_id: id, duration_sec: Number(duration_sec), plays_per_day: Number(plays_per_day ?? 0),
+    date_from, date_to, time_slot_id: time_slot_id ?? null,
+  });
+  db.prepare(`
+    INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, price)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).run(t, campId, id, duration_sec, date_from, date_to, plays_per_day ?? 0, time_slot_id ?? null, calc?.total ?? 0);
+  res.json({ campaign_id: campId, number });
 });
 
 api.get('/screens/:id/playlist', (req, res) => {

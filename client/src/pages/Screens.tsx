@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { get, post, put, del, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
 import { DataTable, Modal, TextInput, SelectInput, StatusBadge, LoadBar, ColumnsButton, Column, Field } from '../components/ui';
 
 interface Screen {
-  id: number; code: string; name: string; address: string; city_id: number | null;
+  id: number; code: string; name: string; side: string | null; address: string; city_id: number | null;
   city_name?: string; region?: string; lat: number | null; lng: number | null;
   width_m: number | null; height_m: number | null; res_w: number | null; res_h: number | null;
   pixel_pitch: string | null; brightness: number | null; screen_type_id: number | null; type_name?: string;
@@ -19,6 +20,7 @@ interface FilterCond { field: string; op: string; value: string }
 const FILTER_FIELDS = [
   { key: 'code', label: 'Код экрана', type: 'text' },
   { key: 'name', label: 'Название/адрес', type: 'text' },
+  { key: 'side', label: 'Сторона', type: 'text' },
   { key: 'city_name', label: 'Город', type: 'text' },
   { key: 'type_name', label: 'Тип экрана', type: 'text' },
   { key: 'pixel_pitch', label: 'Шаг пикселя', type: 'text' },
@@ -87,6 +89,7 @@ export default function Screens() {
         <br /><span className="muted" style={{ fontSize: 12 }}>{s.address}</span>
       </span>
     ) },
+    { key: 'side', title: 'Сторона', render: (s) => s.side || '—' },
     { key: 'city_name', title: 'Город' },
     { key: 'load', title: 'Загрузка петли', sortValue: (s) => s.load?.max_load_pct ?? 0,
       render: (s) => s.load ? <LoadBar pct={s.load.max_load_pct} /> : '—' },
@@ -148,7 +151,7 @@ export default function Screens() {
 
       <div className="page-sub">Показано {filtered.length} из {rows.length} экранов. Загрузка петли — максимум за выбранный период.</div>
 
-      <DataTable columns={columns} rows={filtered} visibleKeys={[...visibleCols, 'code', 'name', 'city_name', 'load', 'status', 'actions']} />
+      <DataTable variant="inventory" columns={columns} rows={filtered} visibleKeys={[...visibleCols, 'code', 'name', 'side', 'city_name', 'load', 'status', 'actions']} />
 
       {filterOpen && (
         <FilterModal conds={conds} onApply={(c) => { setConds(c); setFilterOpen(false); }} onClose={() => setFilterOpen(false)} />
@@ -261,6 +264,8 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
         <div className="form-grid">
           <TextInput label="Код" required value={s.code} onChange={set('code')} placeholder="GRZLED04001" />
           <TextInput label="Название" required value={s.name} onChange={set('name')} placeholder="Экран «Центр»" />
+          <TextInput label="Сторона" value={s.side} onChange={set('side')} placeholder="А"
+            hint="Для двусторонних конструкций: А / Б. Для односторонних — А" />
           <SelectInput label="Тип экрана" value={s.screen_type_id} onChange={set('screen_type_id')}
             options={d.types.map((t: any) => ({ value: t.id, label: t.name }))} />
           <SelectInput label="Ориентация" value={s.orientation} onChange={set('orientation')} allowEmpty={false}
@@ -324,138 +329,230 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
   );
 }
 
-// ---------- Занятость экрана: диаграмма по клиентам и дням ----------
-const DAY_W = 24;
-const LABEL_W = 230;
+// ---------- Занятость экрана: шапка + полоса петли + сетка по месяцам ----------
+const MONTHS_SHORT = ['янв', 'февр', 'март', 'апр', 'май', 'июнь', 'июль', 'авг', 'сент', 'окт', 'нояб', 'дек'];
+
+interface ScheduleSlot {
+  id: number; campaign_id: number; duration_sec: number; plays_per_day: number;
+  date_from: string; date_to: string; campaign_number: string; status: string;
+  client_id: number | null; client_name: string | null; time_slot_name: string | null;
+}
+interface ScheduleData {
+  loop_duration_sec: number; year: number; slots: ScheduleSlot[];
+  peak: { date: string; used_sec: number; free_sec: number; segments: { client_name: string; duration_sec: number; campaign_id: number; status: string }[] };
+}
 
 function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
-  const [range, setRange] = useState({ from: todayISO(), to: plusDaysISO(89) });
-  const [data, setData] = useState<{ load: any; slots: any[] } | null>(null);
+  const nav = useNavigate();
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [data, setData] = useState<ScheduleData | null>(null);
   const [error, setError] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
 
-  useEffect(() => {
-    if (range.to < range.from) return;
-    get(`/screens/${props.screen.id}/schedule?from=${range.from}&to=${range.to}`)
-      .then((d) => { setData(d); setError(''); })
-      .catch((e) => setError(e.message));
-  }, [range.from, range.to]);
+  const load = () => get(`/screens/${props.screen.id}/schedule?year=${year}`)
+    .then((d) => { setData(d); setError(''); })
+    .catch((e) => setError(e.message));
+  useEffect(() => { load(); }, [year]);
 
-  const days: { date: string; used_sec: number; load_pct: number }[] = data?.load.days ?? [];
-  const dayIndex = useMemo(() => new Map(days.map((d, i) => [d.date, i])), [days]);
-
-  // месяцы для верхней шапки
-  const months = useMemo(() => {
-    const out: { label: string; span: number }[] = [];
-    let prev = '';
-    for (const d of days) {
-      const key = d.date.slice(0, 7);
-      if (key === prev) out[out.length - 1].span++;
-      else {
-        const [y, m] = key.split('-');
-        const names = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
-        out.push({ label: `${names[Number(m) - 1]} ${y}`, span: 1 });
-        prev = key;
-      }
+  // группировка слотов по клиенту → строки сетки
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const map = new Map<string, { key: string; client: string; slots: ScheduleSlot[] }>();
+    for (const s of data.slots) {
+      const key = s.client_id ? `c${s.client_id}` : `n:${s.client_name ?? '—'}`;
+      if (!map.has(key)) map.set(key, { key, client: s.client_name ?? 'Без клиента', slots: [] });
+      map.get(key)!.slots.push(s);
     }
-    return out;
-  }, [days]);
+    return [...map.values()];
+  }, [data]);
 
-  const isWeekend = (iso: string) => {
-    const wd = new Date(iso + 'T00:00:00').getDay();
-    return wd === 0 || wd === 6;
+  // месяцы, покрываемые слотом в пределах года (1..12)
+  const monthSpan = (s: ScheduleSlot) => {
+    const y = year;
+    const startM = s.date_from < `${y}-01-01` ? 1 : Number(s.date_from.slice(5, 7));
+    const endM = s.date_to > `${y}-12-31` ? 12 : Number(s.date_to.slice(5, 7));
+    return { startM, endM };
   };
 
-  const grid = (cols: string) => ({ display: 'grid' as const, gridTemplateColumns: cols });
-  const rowCols = `${LABEL_W}px repeat(${days.length}, ${DAY_W}px)`;
-  const barColor = (status: string) => (status === 'sold' ? '#1f6fb2' : '#e8a13c');
-  const loadColor = (pct: number) =>
-    pct >= 95 ? 'rgba(208,85,85,.75)' : pct >= 70 ? 'rgba(232,161,60,.7)' : pct > 0 ? 'rgba(60,165,92,.55)' : 'rgba(195,202,212,.35)';
+  const loop = data?.loop_duration_sec ?? 0;
+  const used = data?.peak.used_sec ?? 0;
 
   return (
-    <Modal title={`${props.screen.code} — занятость экрана`} wide onClose={props.onClose}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-        <span className="muted" style={{ fontSize: 13 }}>{props.screen.name} · {props.screen.address}</span>
-        <span style={{ flex: 1 }} />
-        <label className="muted" style={{ fontSize: 13 }}>Период:</label>
-        <input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
-        <span>—</span>
-        <input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
-        {data && <span className="muted" style={{ fontSize: 12.5 }}>
-          петля {data.load.loop_duration_sec} сек · пик {data.load.max_load_pct}% · свободно {data.load.free_sec} сек
-        </span>}
-      </div>
+    <Modal title={`Экран ${props.screen.code}`} wide onClose={props.onClose}>
       {error && <div className="error-box">{error}</div>}
 
+      {/* Шапка экрана */}
+      <div className="scr-head">
+        <div>{props.screen.city_name ? `г. ${props.screen.city_name}` : '—'}</div>
+        <div>{props.screen.address || props.screen.name}</div>
+        <div>{props.screen.side || '—'}</div>
+        <div className="mono">{props.screen.code}</div>
+      </div>
+
+      {/* Полоса загруженности петли */}
       {data && (
-        <div className="gantt-wrap">
-          <div style={{ width: LABEL_W + days.length * DAY_W }}>
-            {/* месяцы */}
-            <div className="gantt-row gantt-head" style={grid(rowCols)}>
-              <div className="gantt-label" style={{ borderBottom: '1px solid var(--border)' }} />
-              {months.map((m, i) => (
-                <div key={i} className="gantt-month" style={{ gridColumn: `span ${m.span}` }}>{m.label}</div>
-              ))}
-            </div>
-            {/* числа */}
-            <div className="gantt-row gantt-head" style={grid(rowCols)}>
-              <div className="gantt-label">Экран / клиент</div>
-              {days.map((d) => (
-                <div key={d.date} className={'gantt-day' + (isWeekend(d.date) ? ' weekend' : '')}>{Number(d.date.slice(8))}</div>
-              ))}
-            </div>
-            {/* загрузка петли */}
-            <div className="gantt-row" style={grid(rowCols)}>
-              <div className="gantt-label"><b>Загрузка петли, %</b><span className="sub">по всем кампаниям</span></div>
-              {days.map((d) => (
-                <div key={d.date} className="gantt-loadcell" title={`${fmtDate(d.date)}: занято ${d.used_sec} из ${data.load.loop_duration_sec} сек (${d.load_pct}%)`}>
-                  <div className="fillv" style={{ height: `${Math.min(100, d.load_pct)}%`, background: loadColor(d.load_pct) }} />
-                  <span>{d.load_pct > 0 ? Math.round(d.load_pct) : ''}</span>
-                </div>
-              ))}
-            </div>
-            {/* слоты клиентов */}
-            {data.slots.length === 0 && (
-              <div className="gantt-row" style={grid(rowCols)}>
-                <div className="gantt-label muted">Размещений нет</div>
-                <div className="gantt-cell" style={{ gridColumn: `span ${days.length}` }} />
-              </div>
-            )}
-            {data.slots.map((s) => {
-              const startIdx = dayIndex.get(s.date_from >= range.from ? s.date_from : range.from);
-              const endIdx = dayIndex.get(s.date_to <= range.to ? s.date_to : range.to);
-              const span = startIdx != null && endIdx != null ? endIdx - startIdx + 1 : 0;
-              const info = `${s.duration_sec} сек × ${s.plays_per_day || '—'}/сут`;
-              return (
-                <div key={s.id} className="gantt-row" style={{ ...grid(rowCols), position: 'relative' }}>
-                  <div className="gantt-label">
-                    {s.client_name ?? 'Без клиента'}
-                    <span className="sub">№{s.campaign_number} · {s.time_slot_name ?? 'весь день'}</span>
-                  </div>
-                  {days.map((d, i) => (
-                    <div key={d.date} className={'gantt-cell' + (isWeekend(d.date) ? ' weekend' : '')} style={{ gridColumn: i + 2 }} />
-                  ))}
-                  {span > 0 && (
-                    <div className="gantt-bar" style={{
-                      gridColumn: `${startIdx! + 2} / span ${span}`,
-                      gridRow: 1,
-                      background: barColor(s.status),
-                    }}
-                      title={`${s.client_name ?? '—'} · кампания ${s.campaign_number}\n${fmtDate(s.date_from)} — ${fmtDate(s.date_to)}\n${info}${s.creative_name ? `\nРолик: ${s.creative_name}` : ''}`}
-                      onClick={() => { window.location.href = `/campaigns/${s.campaign_id}`; }}>
-                      {span * DAY_W > 110 ? info : ''}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+        <div className="loopbar">
+          <div className="loopbar-labels">
+            <span>{used} сек</span>
+            <span>{data.peak.free_sec} / {loop} сек</span>
+          </div>
+          <div className="loopbar-track">
+            {data.peak.segments.map((seg, i) => (
+              <div key={i} className="loopbar-seg"
+                style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
+                title={`${seg.client_name}: ${seg.duration_sec} сек`} />
+            ))}
+          </div>
+          <div className="loopbar-chips">
+            {data.peak.segments.map((seg, i) => (
+              <div key={i} className="loopbar-chip" style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
+                title={`${seg.client_name}: ${seg.duration_sec} сек`}>{seg.client_name}</div>
+            ))}
+            {data.peak.segments.length === 0 && <span className="muted" style={{ fontSize: 12 }}>Петля свободна</span>}
           </div>
         </div>
       )}
 
-      <div className="gantt-legend">
-        <span><span className="sw" style={{ background: '#1f6fb2' }} />Продано</span>
-        <span><span className="sw" style={{ background: '#e8a13c' }} />Бронь</span>
-        <span>Полоса — период трансляции ролика; клик по полосе открывает кампанию.</span>
+      {/* Сетка по месяцам */}
+      {data && (
+        <div className="sgrid-wrap">
+          {/* шапка: «+» и месяцы */}
+          <div className="sgrid-row sgrid-head">
+            <div className="sgrid-corner">
+              <button className="sgrid-plus" title="Добавить клиента на экран" onClick={() => setAddOpen(true)}>+</button>
+            </div>
+            {MONTHS_SHORT.map((m, i) => <div key={i} className="sgrid-month">{m}</div>)}
+          </div>
+          {rows.length === 0 && (
+            <div className="sgrid-row">
+              <div className="sgrid-client muted">Нет размещений</div>
+              {MONTHS_SHORT.map((_, i) => <div key={i} className="sgrid-cell" />)}
+            </div>
+          )}
+          {rows.map((row) => (
+            <div key={row.key} className="sgrid-row">
+              <div className="sgrid-client">{row.client}</div>
+              {MONTHS_SHORT.map((_, i) => <div key={i} className="sgrid-cell" style={{ gridColumn: i + 2 }} />)}
+              {row.slots.map((s) => {
+                const { startM, endM } = monthSpan(s);
+                return (
+                  <div key={s.id} className="sgrid-bar"
+                    style={{ gridColumn: `${startM + 1} / ${endM + 2}`, gridRow: 1 }}
+                    title={`${row.client} · кампания ${s.campaign_number}\n${fmtDate(s.date_from)} — ${fmtDate(s.date_to)}\n${s.duration_sec} сек × ${s.plays_per_day || '—'}/сут · ${s.time_slot_name ?? 'весь день'}`}
+                    onClick={() => nav(`/campaigns/${s.campaign_id}`)} />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="sgrid-foot">
+        <button className="btn secondary small" onClick={() => setYear(year - 1)}>‹ {year - 1}</button>
+        <b>{year}</b>
+        <button className="btn secondary small" onClick={() => setYear(year + 1)}>{year + 1} ›</button>
+        <span className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
+          Пик загрузки {fmtDate(data?.peak.date)}: {used} из {loop} сек. Полоса — период клиента; клик открывает кампанию.
+        </span>
+      </div>
+
+      {addOpen && (
+        <AddClientToScreenModal screen={props.screen} year={year}
+          onClose={() => setAddOpen(false)}
+          onBooked={() => { setAddOpen(false); load(); }} />
+      )}
+    </Modal>
+  );
+}
+
+// ---------- Добавление клиента на экран (быстрое бронирование) ----------
+function AddClientToScreenModal(props: { screen: Screen; year: number; onClose: () => void; onBooked: () => void }) {
+  const [clients, setClients] = useState<any[]>([]);
+  const [timeSlots, setTimeSlots] = useState<any[]>([]);
+  const [form, setForm] = useState<any>({
+    client_id: '', duration_sec: 10, plays_per_day: 720,
+    date_from: `${props.year}-01-01`, date_to: `${props.year}-03-31`, time_slot_id: '',
+  });
+  const [capacity, setCapacity] = useState<any | null>(null);
+  const [calc, setCalc] = useState<any | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    Promise.all([get('/clients'), get('/time-slots')]).then(([c, t]) => { setClients(c); setTimeSlots(t); });
+  }, []);
+
+  useEffect(() => {
+    setCapacity(null); setCalc(null);
+    if (!form.duration_sec || !form.date_from || !form.date_to || form.date_to < form.date_from) return;
+    const timer = setTimeout(async () => {
+      try {
+        const [cap, price] = await Promise.all([
+          post('/capacity/check', { screen_id: props.screen.id, date_from: form.date_from, date_to: form.date_to, duration_sec: Number(form.duration_sec) }),
+          post('/calc/price', {
+            screen_id: props.screen.id, duration_sec: Number(form.duration_sec), plays_per_day: Number(form.plays_per_day),
+            date_from: form.date_from, date_to: form.date_to, time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
+          }),
+        ]);
+        setCapacity(cap); setCalc(price);
+      } catch (e: any) { setError(e.message); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [form.duration_sec, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id]);
+
+  async function book() {
+    if (!form.client_id) { setError('Выберите клиента'); return; }
+    setBusy(true); setError('');
+    try {
+      await post(`/screens/${props.screen.id}/book`, {
+        client_id: Number(form.client_id), date_from: form.date_from, date_to: form.date_to,
+        duration_sec: Number(form.duration_sec), plays_per_day: Number(form.plays_per_day),
+        time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
+      });
+      props.onBooked();
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  }
+
+  const blocked = capacity && !capacity.ok;
+  return (
+    <Modal title={`Добавить клиента — ${props.screen.code}`} onClose={props.onClose}
+      footer={<>
+        <button className="btn secondary" onClick={props.onClose}>Отмена</button>
+        <button className="btn" onClick={book} disabled={busy || !form.client_id || !!blocked}>
+          Забронировать{calc ? ` — ${fmtMoney(calc.total)}` : ''}
+        </button>
+      </>}>
+      {error && <div className="error-box">{error}</div>}
+      <div className="form-grid">
+        <SelectInput label="Клиент" required value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
+          options={clients.map((c) => ({ value: c.id, label: c.name }))} />
+        <SelectInput label="Длительность ролика, сек" required value={form.duration_sec} allowEmpty={false}
+          onChange={(v) => setForm({ ...form, duration_sec: v })}
+          options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
+        <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day} onChange={(v) => setForm({ ...form, plays_per_day: v })} />
+        <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
+        <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
+        <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
+          options={timeSlots.map((t) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
+      </div>
+
+      {capacity && (
+        <div className={capacity.ok ? 'ok-box' : 'error-box'} style={{ marginTop: 14 }}>
+          {capacity.ok
+            ? `Ролик помещается. Загрузка петли на периоде: до ${capacity.load.max_load_pct}% (свободно ${capacity.load.free_sec} из ${capacity.load.loop_duration_sec} сек).`
+            : capacity.reason}
+        </div>
+      )}
+      {calc && (
+        <div className="panel" style={{ marginTop: 12, marginBottom: 0 }}>
+          <dl className="kv">
+            <dt>Дней в периоде</dt><dd>{calc.days}</dd>
+            <dt>Стоимость размещения</dt><dd><b>{fmtMoney(calc.total)}</b></dd>
+          </dl>
+        </div>
+      )}
+      <div className="page-sub" style={{ marginTop: 10, marginBottom: 0 }}>
+        Будет создана кампания-бронь для клиента. Продажу и оплату оформляйте в карточке кампании.
       </div>
     </Modal>
   );

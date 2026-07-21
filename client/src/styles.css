@@ -141,6 +141,44 @@ table.data tbody tr:hover { background: #f0f6fc; }
 table.data tr.clickable { cursor: pointer; }
 .empty-row { text-align: center; color: var(--muted); padding: 24px !important; }
 
+/* ---------- Вариант «Инвентарь»: чистые серые строки с разделителями ---------- */
+.table-wrap.inventory { background: transparent; border: none; border-radius: 0; }
+.table-wrap.inventory table.data { border-collapse: separate; border-spacing: 0 8px; }
+.table-wrap.inventory thead th {
+  background: transparent;
+  border: none;
+  color: #8a90a0;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  font-size: 11.5px;
+  text-align: center;
+  padding: 2px 12px 6px;
+}
+.table-wrap.inventory thead th:first-child,
+.table-wrap.inventory tbody td:first-child { text-align: left; }
+.table-wrap.inventory tbody td {
+  background: #f2f3f5;
+  border: none;
+  border-right: 1px solid #e2e4e9;
+  border-top: 1px solid #e7e9ee;
+  border-bottom: 1px solid #e7e9ee;
+  text-align: center;
+  vertical-align: middle;
+  padding: 16px 14px;
+  color: #4a4f5a;
+}
+.table-wrap.inventory tbody td:first-child {
+  border-left: 1px solid #e7e9ee;
+  border-radius: 8px 0 0 8px;
+  padding-left: 22px;
+}
+.table-wrap.inventory tbody td:last-child {
+  border-right: 1px solid #e7e9ee;
+  border-radius: 0 8px 8px 0;
+}
+.table-wrap.inventory tbody tr:hover td { background: #eaf1f9; }
+
 /* ---------- Бейджи и индикаторы ---------- */
 .badge {
   display: inline-block;
@@ -433,3 +471,123 @@ table.data tr.clickable { cursor: pointer; }
 .gantt-legend .sw { display: inline-block; width: 22px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 .muted { color: var(--muted); }
 .mono { font-family: Consolas, monospace; }
+
+/* ---------- Окно занятости экрана: шапка ---------- */
+.scr-head {
+  display: grid;
+  grid-template-columns: 1fr 2.2fr 0.8fr 1.2fr;
+  background: #f2f3f5;
+  border: 1px solid #e2e4e9;
+  border-radius: 8px;
+  margin-bottom: 18px;
+  color: #4a4f5a;
+  font-size: 15px;
+}
+.scr-head > div {
+  padding: 16px 14px;
+  text-align: center;
+  border-right: 1px solid #d9dce2;
+}
+.scr-head > div:last-child { border-right: none; }
+
+/* ---------- Полоса загруженности петли ---------- */
+.loopbar { margin-bottom: 20px; }
+.loopbar-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.loopbar-track {
+  display: flex;
+  height: 16px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: repeating-linear-gradient(90deg, #e9ecf1 0 1px, #f4f6f9 1px 6px);
+  border: 1px solid #dfe3ea;
+}
+.loopbar-seg {
+  height: 100%;
+  background: #17a2f5;
+  border-right: 1px solid rgba(255,255,255,.7);
+}
+.loopbar-seg:last-child { border-right: none; }
+.loopbar-chips {
+  display: flex;
+  margin-top: 5px;
+  border: 1px solid #e2e4e9;
+  border-radius: 4px;
+  overflow: hidden;
+  min-height: 26px;
+}
+.loopbar-chip {
+  font-size: 12px;
+  color: #4a4f5a;
+  text-align: center;
+  padding: 4px 2px;
+  border-right: 1px solid #e2e4e9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.loopbar-chip:last-child { border-right: none; }
+
+/* ---------- Сетка занятости по месяцам ---------- */
+.sgrid-wrap { border: 1px solid #e2e4e9; border-radius: 8px; overflow: hidden; }
+.sgrid-row {
+  display: grid;
+  grid-template-columns: 210px repeat(12, 1fr);
+  position: relative;
+  border-bottom: 1px solid #e7e9ee;
+}
+.sgrid-row:last-child { border-bottom: none; }
+.sgrid-head { background: #fff; }
+.sgrid-corner {
+  border-right: 1px solid #e7e9ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+}
+.sgrid-plus {
+  width: 30px; height: 30px;
+  border: none;
+  background: #eaf3fb;
+  color: var(--primary);
+  font-size: 22px;
+  line-height: 1;
+  border-radius: 6px;
+}
+.sgrid-plus:hover { background: var(--primary); color: #fff; }
+.sgrid-month {
+  text-align: center;
+  padding: 14px 4px;
+  font-size: 13px;
+  color: #6b7280;
+  border-right: 1px solid #eef1f5;
+}
+.sgrid-month:last-child { border-right: none; }
+.sgrid-client {
+  padding: 16px 18px;
+  font-size: 14px;
+  color: #3a3f4a;
+  border-right: 1px solid #e7e9ee;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sgrid-cell {
+  border-right: 1px solid #eef1f5;
+  min-height: 44px;
+  background: #f2f3f5;
+}
+.sgrid-cell:last-child { border-right: none; }
+.sgrid-bar {
+  align-self: center;
+  height: 26px;
+  margin: 0 4px;
+  border-radius: 6px;
+  background: #17a2f5;
+  cursor: pointer;
+  z-index: 2;
+}
+.sgrid-bar:hover { background: #0f8fdb; }
+.sgrid-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }

@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS screens (
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),
   code TEXT NOT NULL,
   name TEXT NOT NULL,
+  side TEXT,
   address TEXT,
   city_id INTEGER REFERENCES cities(id),
   lat REAL, lng REAL,
@@ -194,6 +195,14 @@ CREATE INDEX IF NOT EXISTS idx_screens_tenant ON screens(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_campaigns_tenant ON campaigns(tenant_id);
 `);
 
+// ---------- Миграции (для существующих БД) ----------
+const screenCols = db.prepare(`PRAGMA table_info(screens)`).all() as { name: string }[];
+if (!screenCols.some((c) => c.name === 'side')) {
+  db.exec(`ALTER TABLE screens ADD COLUMN side TEXT`);
+  // бэкфилл: односторонним экранам проставляем сторону «А» по умолчанию
+  db.exec(`UPDATE screens SET side = 'А' WHERE side IS NULL`);
+}
+
 // ---------- Seed ----------
 const hasUsers = db.prepare('SELECT COUNT(*) c FROM users').get() as { c: number };
 if (hasUsers.c === 0) {
@@ -260,14 +269,14 @@ if (hasUsers.c === 0) {
     const cl2 = cl.run(t1, 'Сеть «Беркат»', '+7 (871) 244-55-66', 'reklama@berkat.ru', 'г. Грозный, ул. Мира, 30', '[]').lastInsertRowid as number;
     const cl3 = cl.run(t1, 'Фитнес-клуб «Атлант»', '+7 (928) 333-22-11', 'atlant@fitness.ru', 'г. Аргун, ул. Шоссейная, 5', '[]').lastInsertRowid as number;
 
-    const scr = db.prepare(`INSERT INTO screens (tenant_id,code,name,address,city_id,lat,lng,width_m,height_m,res_w,res_h,pixel_pitch,brightness,screen_type_id,orientation,loop_duration_sec,work_from,work_to,price_per_play,price_per_sec,tax_regime_id,owner_id,status,tags)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    const s1 = scr.run(t1, 'GRZLED04001', 'Экран «Центр»', 'пр. Кадырова / ул. Мира', cGrz, 43.3119, 45.6889, 6, 3, 1152, 576, 'P5.2', 5500, stOut, 'horizontal', 60, '06:00', '24:00', 15, 3, taxUsn, o1, 'active', 'центр,трафик').lastInsertRowid as number;
-    const s2 = scr.run(t1, 'GRZLED04002', 'Экран «Беркат»', 'ул. Мира, рынок Беркат', cGrz, 43.3178, 45.6949, 4, 3, 768, 576, 'P5.2', 5000, stOut, 'horizontal', 60, '07:00', '23:00', 12, 2.4, taxUsn, o1, 'active', 'рынок').lastInsertRowid as number;
-    const s3 = scr.run(t1, 'GRZLED04003', 'Медиафасад «Грозный-Сити»', 'пр. Кадырова, Грозный-Сити', cGrz, 43.3168, 45.6947, 12, 20, 960, 1600, 'P12.5', 6500, stMedia, 'vertical', 120, '08:00', '24:00', 40, 8, taxNds, o1, 'active', 'премиум,имидж').lastInsertRowid as number;
-    const s4 = scr.run(t1, 'ARGLED01001', 'Экран «Аргун-Сити»', 'ул. Шоссейная, в/д ТЦ', cArg, 43.2903, 45.8743, 6, 3, 1152, 576, 'P6.6', 5000, stOut, 'horizontal', 60, '06:00', '23:00', 10, 2, taxUsn, o2, 'active', null).lastInsertRowid as number;
-    const s5 = scr.run(t1, 'GUDLED02001', 'Экран «Вокзал»', 'Привокзальная площадь', cGud, 43.3506, 46.1039, 4, 3, 768, 576, 'P6.6', 4500, stOut, 'horizontal', 45, '06:00', '22:00', 8, 1.6, taxUsn, o2, 'maintenance', null).lastInsertRowid as number;
-    scr.run(t1, 'GRZLED04004', 'Видеостена ТЦ «Гранд Парк»', 'ул. Мира, ТЦ Гранд Парк, атриум', cGrz, 43.3140, 45.6920, 3, 2, 1920, 1080, 'P2.5', 1200, stIn, 'horizontal', 90, '10:00', '22:00', 6, 1.2, taxUsn, o1, 'active', 'indoor,тц');
+    const scr = db.prepare(`INSERT INTO screens (tenant_id,code,name,side,address,city_id,lat,lng,width_m,height_m,res_w,res_h,pixel_pitch,brightness,screen_type_id,orientation,loop_duration_sec,work_from,work_to,price_per_play,price_per_sec,tax_regime_id,owner_id,status,tags)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const s1 = scr.run(t1, 'GRZLED04001', 'Экран «Центр»', 'А', 'пр. Кадырова / ул. Мира', cGrz, 43.3119, 45.6889, 6, 3, 1152, 576, 'P5.2', 5500, stOut, 'horizontal', 60, '06:00', '24:00', 15, 3, taxUsn, o1, 'active', 'центр,трафик').lastInsertRowid as number;
+    const s2 = scr.run(t1, 'GRZLED04002', 'Экран «Беркат»', 'А', 'ул. Мира, рынок Беркат', cGrz, 43.3178, 45.6949, 4, 3, 768, 576, 'P5.2', 5000, stOut, 'horizontal', 60, '07:00', '23:00', 12, 2.4, taxUsn, o1, 'active', 'рынок').lastInsertRowid as number;
+    const s3 = scr.run(t1, 'GRZLED04003', 'Медиафасад «Грозный-Сити»', 'А', 'пр. Кадырова, Грозный-Сити', cGrz, 43.3168, 45.6947, 12, 20, 960, 1600, 'P12.5', 6500, stMedia, 'vertical', 120, '08:00', '24:00', 40, 8, taxNds, o1, 'active', 'премиум,имидж').lastInsertRowid as number;
+    const s4 = scr.run(t1, 'ARGLED01001', 'Экран «Аргун-Сити»', 'А', 'ул. Шоссейная, в/д ТЦ', cArg, 43.2903, 45.8743, 6, 3, 1152, 576, 'P6.6', 5000, stOut, 'horizontal', 60, '06:00', '23:00', 10, 2, taxUsn, o2, 'active', null).lastInsertRowid as number;
+    const s5 = scr.run(t1, 'GUDLED02001', 'Экран «Вокзал»', 'А', 'Привокзальная площадь', cGud, 43.3506, 46.1039, 4, 3, 768, 576, 'P6.6', 4500, stOut, 'horizontal', 45, '06:00', '22:00', 8, 1.6, taxUsn, o2, 'maintenance', null).lastInsertRowid as number;
+    scr.run(t1, 'GRZLED04004', 'Видеостена ТЦ «Гранд Парк»', 'А', 'ул. Мира, ТЦ Гранд Парк, атриум', cGrz, 43.3140, 45.6920, 3, 2, 1920, 1080, 'P2.5', 1200, stIn, 'horizontal', 90, '10:00', '22:00', 6, 1.2, taxUsn, o1, 'active', 'indoor,тц');
 
     // demo campaigns
     const camp = db.prepare(`INSERT INTO campaigns (tenant_id,number,client_id,manager_id,created_at,status,reserve_until,discount_id,discount_percent,production_cost) VALUES (?,?,?,?,?,?,?,?,?,?)`);

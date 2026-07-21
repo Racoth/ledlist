@@ -101,6 +101,7 @@ export function DataTable<T extends { id: number }>(props: {
   onRowClick?: (row: T) => void;
   visibleKeys?: string[];       // null = все
   emptyText?: string;
+  variant?: string;             // доп. класс оформления (напр. 'inventory')
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -122,7 +123,7 @@ export function DataTable<T extends { id: number }>(props: {
   }, [props.rows, sortKey, sortDir]);
 
   return (
-    <div className="table-wrap">
+    <div className={'table-wrap' + (props.variant ? ' ' + props.variant : '')}>
       <table className="data">
         <thead>
           <tr>
