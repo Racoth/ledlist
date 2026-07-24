@@ -152,34 +152,8 @@ api.get('/screens/:id/schedule', (req, res) => {
     ORDER BY cl.name, s.date_from
   `).all(id, yTo, yFrom) as any[];
 
-  // Пиковый день: максимум одновременно занятых секунд петли за год
-  let peakDate = yFrom, peakUsed = -1, peakSlots: any[] = [];
-  const d = new Date(yFrom + 'T00:00:00'), end = new Date(yTo + 'T00:00:00');
-  for (let i = 0; d <= end && i < 366; i++) {
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const active = slots.filter((s) => s.date_from <= iso && s.date_to >= iso);
-    const used = active.reduce((a, s) => a + s.duration_sec, 0);
-    if (used > peakUsed) { peakUsed = used; peakDate = iso; peakSlots = active; }
-    d.setDate(d.getDate() + 1);
-  }
-  if (peakUsed < 0) peakUsed = 0;
-
-  res.json({
-    loop_duration_sec: screen.loop_duration_sec,
-    year,
-    slots,
-    peak: {
-      date: peakDate,
-      used_sec: peakUsed,
-      free_sec: Math.max(0, screen.loop_duration_sec - peakUsed),
-      segments: peakSlots.map((s) => ({
-        client_name: s.client_name ?? 'Без клиента',
-        duration_sec: s.duration_sec,
-        campaign_id: s.campaign_id,
-        status: s.status,
-      })),
-    },
-  });
+  // Загрузка петли по месяцам считается на клиенте из слотов.
+  res.json({ loop_duration_sec: screen.loop_duration_sec, year, slots });
 });
 
 // Быстрое бронирование клиента на экране (из окна занятости): создаёт кампанию-бронь + слот

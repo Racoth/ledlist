@@ -329,8 +329,9 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
   );
 }
 
-// ---------- Занятость экрана: шапка + полоса петли + сетка по месяцам ----------
+// ---------- Занятость экрана: шапка + сетка по месяцам + полоса за месяц ----------
 const MONTHS_SHORT = ['янв', 'февр', 'март', 'апр', 'май', 'июнь', 'июль', 'авг', 'сент', 'окт', 'нояб', 'дек'];
+const MONTHS_FULL = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 
 interface ScheduleSlot {
   id: number; campaign_id: number; duration_sec: number; plays_per_day: number;
@@ -339,12 +340,13 @@ interface ScheduleSlot {
 }
 interface ScheduleData {
   loop_duration_sec: number; year: number; slots: ScheduleSlot[];
-  peak: { date: string; used_sec: number; free_sec: number; segments: { client_name: string; duration_sec: number; campaign_id: number; status: string }[] };
 }
 
 function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
   const nav = useNavigate();
-  const [year, setYear] = useState(new Date().getFullYear());
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [selMonth, setSelMonth] = useState(now.getMonth() + 1); // 1..12
   const [data, setData] = useState<ScheduleData | null>(null);
   const [error, setError] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -368,14 +370,36 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
 
   // месяцы, покрываемые слотом в пределах года (1..12)
   const monthSpan = (s: ScheduleSlot) => {
-    const y = year;
-    const startM = s.date_from < `${y}-01-01` ? 1 : Number(s.date_from.slice(5, 7));
-    const endM = s.date_to > `${y}-12-31` ? 12 : Number(s.date_to.slice(5, 7));
+    const startM = s.date_from < `${year}-01-01` ? 1 : Number(s.date_from.slice(5, 7));
+    const endM = s.date_to > `${year}-12-31` ? 12 : Number(s.date_to.slice(5, 7));
     return { startM, endM };
   };
 
   const loop = data?.loop_duration_sec ?? 0;
-  const used = data?.peak.used_sec ?? 0;
+
+  // Загрузка петли за выбранный месяц: пиковый день месяца, сегменты по клиентам
+  const monthLoad = useMemo(() => {
+    if (!data) return null;
+    const daysInMonth = new Date(year, selMonth, 0).getDate();
+    let peakUsed = 0, peakSlots: ScheduleSlot[] = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const iso = `${year}-${String(selMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const active = data.slots.filter((s) => s.date_from <= iso && s.date_to >= iso);
+      const u = active.reduce((a, s) => a + s.duration_sec, 0);
+      if (u > peakUsed) { peakUsed = u; peakSlots = active; }
+    }
+    const byClient = new Map<string, number>();
+    for (const s of peakSlots) {
+      const k = s.client_name ?? 'Без клиента';
+      byClient.set(k, (byClient.get(k) ?? 0) + s.duration_sec);
+    }
+    return {
+      used: peakUsed,
+      free: Math.max(0, loop - peakUsed),
+      pct: loop ? Math.round((peakUsed / loop) * 1000) / 10 : 0,
+      segments: [...byClient.entries()].map(([client_name, duration_sec]) => ({ client_name, duration_sec })),
+    };
+  }, [data, selMonth, year, loop]);
 
   return (
     <Modal title={`Экран ${props.screen.code}`} wide onClose={props.onClose}>
@@ -389,50 +413,32 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
         <div className="mono">{props.screen.code}</div>
       </div>
 
-      {/* Полоса загруженности петли */}
-      {data && (
-        <div className="loopbar">
-          <div className="loopbar-labels">
-            <span>{used} сек</span>
-            <span>{data.peak.free_sec} / {loop} сек</span>
-          </div>
-          <div className="loopbar-track">
-            {data.peak.segments.map((seg, i) => (
-              <div key={i} className="loopbar-seg"
-                style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
-                title={`${seg.client_name}: ${seg.duration_sec} сек`} />
-            ))}
-          </div>
-          <div className="loopbar-chips">
-            {data.peak.segments.map((seg, i) => (
-              <div key={i} className="loopbar-chip" style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
-                title={`${seg.client_name}: ${seg.duration_sec} сек`}>{seg.client_name}</div>
-            ))}
-            {data.peak.segments.length === 0 && <span className="muted" style={{ fontSize: 12 }}>Петля свободна</span>}
-          </div>
-        </div>
-      )}
-
       {/* Сетка по месяцам */}
       {data && (
         <div className="sgrid-wrap">
-          {/* шапка: «+» и месяцы */}
+          {/* шапка: «+» и месяцы (кликабельны) */}
           <div className="sgrid-row sgrid-head">
             <div className="sgrid-corner">
               <button className="sgrid-plus" title="Добавить клиента на экран" onClick={() => setAddOpen(true)}>+</button>
             </div>
-            {MONTHS_SHORT.map((m, i) => <div key={i} className="sgrid-month">{m}</div>)}
+            {MONTHS_SHORT.map((m, i) => (
+              <div key={i} className={'sgrid-month' + (selMonth === i + 1 ? ' sel' : '')}
+                title={`Показать загрузку за ${MONTHS_FULL[i]}`} onClick={() => setSelMonth(i + 1)}>{m}</div>
+            ))}
           </div>
           {rows.length === 0 && (
             <div className="sgrid-row">
               <div className="sgrid-client muted">Нет размещений</div>
-              {MONTHS_SHORT.map((_, i) => <div key={i} className="sgrid-cell" />)}
+              {MONTHS_SHORT.map((_, i) => <div key={i} className={'sgrid-cell' + (selMonth === i + 1 ? ' sel' : '')} />)}
             </div>
           )}
           {rows.map((row) => (
             <div key={row.key} className="sgrid-row">
               <div className="sgrid-client">{row.client}</div>
-              {MONTHS_SHORT.map((_, i) => <div key={i} className="sgrid-cell" style={{ gridColumn: i + 2 }} />)}
+              {MONTHS_SHORT.map((_, i) => (
+                <div key={i} className={'sgrid-cell' + (selMonth === i + 1 ? ' sel' : '')}
+                  style={{ gridColumn: i + 2 }} onClick={() => setSelMonth(i + 1)} />
+              ))}
               {row.slots.map((s) => {
                 const { startM, endM } = monthSpan(s);
                 return (
@@ -447,12 +453,40 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
         </div>
       )}
 
+      {/* Полоса загруженности за выбранный месяц */}
+      {data && monthLoad && (
+        <div className="loopbar">
+          <div className="loopbar-head">
+            <b>Загрузка экрана — {MONTHS_FULL[selMonth - 1]} {year}</b>
+            <span className="muted">петля {loop} сек · заполнено {monthLoad.pct}%</span>
+          </div>
+          <div className="loopbar-labels">
+            <span>{monthLoad.used} сек</span>
+            <span>свободно {monthLoad.free} / {loop} сек</span>
+          </div>
+          <div className="loopbar-track">
+            {monthLoad.segments.map((seg, i) => (
+              <div key={i} className="loopbar-seg"
+                style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
+                title={`${seg.client_name}: ${seg.duration_sec} сек`} />
+            ))}
+          </div>
+          <div className="loopbar-chips">
+            {monthLoad.segments.map((seg, i) => (
+              <div key={i} className="loopbar-chip" style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
+                title={`${seg.client_name}: ${seg.duration_sec} сек`}>{seg.client_name}</div>
+            ))}
+            {monthLoad.segments.length === 0 && <span className="muted" style={{ fontSize: 12, padding: '4px 8px' }}>Петля свободна — размещений в этом месяце нет</span>}
+          </div>
+        </div>
+      )}
+
       <div className="sgrid-foot">
         <button className="btn secondary small" onClick={() => setYear(year - 1)}>‹ {year - 1}</button>
         <b>{year}</b>
         <button className="btn secondary small" onClick={() => setYear(year + 1)}>{year + 1} ›</button>
         <span className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-          Пик загрузки {fmtDate(data?.peak.date)}: {used} из {loop} сек. Полоса — период клиента; клик открывает кампанию.
+          Кликните месяц — увидите загрузку экрана за него. Полоса-период — клиент; клик по ней открывает кампанию.
         </span>
       </div>
 

@@ -490,8 +490,10 @@ table.data tr.clickable { cursor: pointer; }
 }
 .scr-head > div:last-child { border-right: none; }
 
-/* ---------- Полоса загруженности петли ---------- */
-.loopbar { margin-bottom: 20px; }
+/* ---------- Полоса загруженности петли (за выбранный месяц) ---------- */
+.loopbar { margin: 18px 0 6px; }
+.loopbar-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 7px; font-size: 14px; flex-wrap: wrap; }
+.loopbar-head .muted { font-size: 12.5px; }
 .loopbar-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .loopbar-track {
   display: flex;
@@ -561,8 +563,12 @@ table.data tr.clickable { cursor: pointer; }
   font-size: 13px;
   color: #6b7280;
   border-right: 1px solid #eef1f5;
+  cursor: pointer;
+  user-select: none;
 }
 .sgrid-month:last-child { border-right: none; }
+.sgrid-month:hover { background: #eef4fa; color: var(--primary); }
+.sgrid-month.sel { background: var(--primary); color: #fff; font-weight: 600; }
 .sgrid-client {
   padding: 16px 18px;
   font-size: 14px;
@@ -578,8 +584,10 @@ table.data tr.clickable { cursor: pointer; }
   border-right: 1px solid #eef1f5;
   min-height: 44px;
   background: #f2f3f5;
+  cursor: pointer;
 }
 .sgrid-cell:last-child { border-right: none; }
+.sgrid-cell.sel { background: #dcebf9; }
 .sgrid-bar {
   align-self: center;
   height: 26px;
