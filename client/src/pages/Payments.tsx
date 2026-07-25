@@ -14,20 +14,22 @@ export default function Payments() {
     { key: 'pay_date', title: 'Дата', render: (p) => fmtDate(p.pay_date) },
     { key: 'campaign_number', title: 'Кампания', render: (p) => <Link to={`/campaigns/${p.campaign_id}`} className="mono">{p.campaign_number}</Link> },
     { key: 'client_name', title: 'Клиент' },
-    { key: 'amount', title: 'Сумма', sortValue: (p) => p.amount, render: (p) => <b>{fmtMoney(p.amount)}</b> },
+    { key: 'amount', title: 'Сумма', sortValue: (p) => p.amount, render: (p) => <b className="num">{fmtMoney(p.amount)}</b> },
     { key: 'method', title: 'Способ', render: (p) => ({ bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' } as any)[p.method] },
-    { key: 'comment', title: 'Комментарий' },
+    { key: 'comment', title: 'Комментарий', render: (p) => p.comment ?? <span className="muted">—</span> },
   ];
 
   return (
     <div className="page">
       <div className="page-head"><h1>Платежи</h1></div>
       <div className="summary-cards">
-        <div className="scard"><div className="v">{rows.length}</div><div className="l">Всего платежей</div></div>
-        <div className="scard"><div className="v">{fmtMoney(total)}</div><div className="l">Сумма поступлений</div></div>
+        <div className="scard"><div className="l">Всего платежей</div><div className="v">{rows.length}</div></div>
+        <div className="scard is-money"><div className="l">Сумма поступлений</div><div className="v">{fmtMoney(total)}</div></div>
       </div>
-      <div className="page-sub">Платёж проводится из карточки кампании (вкладка «Оплата»).</div>
-      <DataTable columns={columns} rows={rows} emptyText="Платежей нет" />
+      <div className="page-sub">Реестр всех поступлений. Новый платёж проводится в карточке кампании, на вкладке «Оплата».</div>
+      <DataTable caption="Реестр платежей" columns={columns} rows={rows}
+        emptyText="Платежей нет"
+        emptyHint="Откройте кампанию и проведите оплату — платёж появится здесь." />
     </div>
   );
 }

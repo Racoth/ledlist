@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, post, put, del, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
-import { DataTable, Modal, TextInput, SelectInput, StatusBadge, LoadBar, ColumnsButton, Column, Field } from '../components/ui';
+import {
+  DataTable, Modal, TextInput, SelectInput, TextArea, StatusBadge, LoadBar, ColumnsButton,
+  Column, Alert, Icon, LoopTape, LoopRuler, TapeLegend, TapeSegment, seriesColor, loadTone, onColor,
+} from '../components/ui';
 
 interface Screen {
   id: number; code: string; name: string; side: string | null; address: string; city_id: number | null;
@@ -30,6 +33,9 @@ const FILTER_FIELDS = [
   { key: 'load_pct', label: 'Загрузка петли, %', type: 'number' },
   { key: 'brightness', label: 'Яркость, нит', type: 'number' },
 ];
+
+const OP_LABELS: Record<string, string> = { contains: 'содержит', eq: 'равно', gte: '≥', lte: '≤' };
+const STATUS_RU: Record<string, string> = { active: 'Активен', maintenance: 'На обслуживании', inactive: 'Отключён' };
 
 function condMatches(s: Screen, c: FilterCond): boolean {
   let v: any;
@@ -80,38 +86,63 @@ export default function Screens() {
     () => rows.filter((s) => conds.every((c) => c.value === '' || condMatches(s, c))),
     [rows, conds]);
 
+  // Сводка по отфильтрованному инвентарю
+  const summary = useMemo(() => {
+    const withLoad = filtered.filter((s) => s.load);
+    const freeSec = withLoad.reduce((a, s) => a + (s.load!.free_sec ?? 0), 0);
+    const avg = withLoad.length
+      ? Math.round(withLoad.reduce((a, s) => a + s.load!.max_load_pct, 0) / withLoad.length)
+      : 0;
+    return { freeSec, avg, full: withLoad.filter((s) => s.load!.max_load_pct >= 95).length };
+  }, [filtered]);
+
   const columns: Column<Screen>[] = [
-    { key: 'code', title: 'Код', render: (s) => <b className="mono">{s.code}</b> },
-    { key: 'name', title: 'Название / адрес', render: (s) => (
-      <span>
-        <a style={{ cursor: 'pointer', fontWeight: 600 }} title="Открыть занятость экрана"
-          onClick={(e) => { e.stopPropagation(); setScheduleScreen(s); }}>{s.name}</a>
-        <br /><span className="muted" style={{ fontSize: 12 }}>{s.address}</span>
+    { key: 'code', title: 'Код', sortValue: (s) => s.code, render: (s) => (
+      <>
+        <span className={'rowstate ' + s.status} title={STATUS_RU[s.status]} />
+        <b className="mono">{s.code}</b>
+      </>
+    ) },
+    { key: 'name', title: 'Название и адрес', sortValue: (s) => s.name, render: (s) => (
+      <span className="screen-name">
+        <button className="nm" title="Открыть занятость экрана"
+          onClick={(e) => { e.stopPropagation(); setScheduleScreen(s); }}>{s.name}</button>
+        <span className="addr">{s.address}</span>
       </span>
     ) },
     { key: 'side', title: 'Сторона', render: (s) => s.side || '—' },
     { key: 'city_name', title: 'Город' },
     { key: 'load', title: 'Загрузка петли', sortValue: (s) => s.load?.max_load_pct ?? 0,
-      render: (s) => s.load ? <LoadBar pct={s.load.max_load_pct} /> : '—' },
+      render: (s) => s.load
+        ? <LoadBar pct={s.load.max_load_pct} loop={s.load.loop} />
+        : <span className="muted">—</span> },
     { key: 'free', title: 'Свободно, сек', optional: true, sortValue: (s) => s.load?.free_sec ?? 0,
-      render: (s) => s.load ? `${s.load.free_sec} / ${s.load.loop}` : '—' },
+      render: (s) => s.load
+        ? <span className="cell-stack"><b className="num">{s.load.free_sec}</b><span className="sub">из {s.load.loop}</span></span>
+        : '—' },
     { key: 'size', title: 'Размер, м', optional: true, render: (s) => s.width_m ? `${s.width_m}×${s.height_m}` : '—' },
-    { key: 'resolution', title: 'Разрешение', optional: true, render: (s) => s.res_w ? `${s.res_w}×${s.res_h}` : '—' },
+    { key: 'resolution', title: 'Разрешение', optional: true, render: (s) => s.res_w ? <span className="mono">{s.res_w}×{s.res_h}</span> : '—' },
     { key: 'pitch', title: 'Шаг пикселя', optional: true, render: (s) => s.pixel_pitch ?? '—' },
     { key: 'brightness', title: 'Яркость, нит', optional: true },
     { key: 'type_name', title: 'Тип', optional: true },
     { key: 'orientation', title: 'Ориентация', optional: true, render: (s) => s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная' },
-    { key: 'loop', title: 'Петля, сек', optional: true, sortValue: (s) => s.loop_duration_sec, render: (s) => s.loop_duration_sec },
-    { key: 'work', title: 'Часы работы', optional: true, render: (s) => `${s.work_from}–${s.work_to}` },
-    { key: 'price', title: 'Цена, ₽/сек', optional: true, sortValue: (s) => s.price_per_sec, render: (s) => fmtMoney(s.price_per_sec) },
+    { key: 'loop', title: 'Петля, сек', optional: true, sortValue: (s) => s.loop_duration_sec, render: (s) => <span className="num">{s.loop_duration_sec}</span> },
+    { key: 'work', title: 'Часы работы', optional: true, render: (s) => <span className="mono">{s.work_from}–{s.work_to}</span> },
+    { key: 'price', title: 'Цена, ₽/сек', optional: true, sortValue: (s) => s.price_per_sec, render: (s) => <span className="num">{fmtMoney(s.price_per_sec)}</span> },
     { key: 'owner_name', title: 'Владелец', optional: true },
     { key: 'tax_name', title: 'Налоговый режим', optional: true },
     { key: 'tags', title: 'Теги', optional: true },
     { key: 'status', title: 'Статус', render: (s) => <StatusBadge status={s.status} /> },
-    { key: 'actions', title: '', render: (s) => (
+    { key: 'actions', title: '', sortable: false, render: (s) => (
       <span className="actions-cell" onClick={(e) => e.stopPropagation()}>
-        <button className="btn small secondary" onClick={() => setPlaylistScreen(s)}>Плейлист</button>
-        {isAdmin && <button className="btn small secondary" onClick={() => setEditScreen(s)}>Изменить</button>}
+        <button className="btn small secondary" onClick={() => setPlaylistScreen(s)}>
+          <Icon name="list" size={13} /> Плейлист
+        </button>
+        {isAdmin && (
+          <button className="btn small secondary" onClick={() => setEditScreen(s)} aria-label={`Изменить экран ${s.code}`}>
+            <Icon name="edit" size={13} /> Изменить
+          </button>
+        )}
       </span>
     ) },
   ];
@@ -120,38 +151,71 @@ export default function Screens() {
     <div className="page">
       <div className="page-head">
         <h1>Инвентарь экранов</h1>
-        <label className="muted" style={{ fontSize: 13 }}>Загрузка за период:</label>
-        <input type="date" value={period.from} onChange={(e) => setPeriod({ ...period, from: e.target.value })} />
-        <span>—</span>
-        <input type="date" value={period.to} onChange={(e) => setPeriod({ ...period, to: e.target.value })} />
-        <button className="btn secondary" onClick={() => setFilterOpen(true)}>
-          Фильтр {conds.length > 0 && `(${conds.length})`}
-        </button>
-        <ColumnsButton columns={columns} visible={visibleCols} onChange={setVisibleCols} />
-        {isAdmin && <button className="btn" onClick={() => setEditScreen({ orientation: 'horizontal', loop_duration_sec: 60, work_from: '06:00', work_to: '24:00', status: 'active' })}>+ Добавить экран</button>}
+        <div className="toolbar">
+          <span className="field-inline">
+            <Icon name="calendar" size={14} />
+            Загрузка за период
+            <input type="date" aria-label="Начало периода" value={period.from}
+              onChange={(e) => setPeriod({ ...period, from: e.target.value })} />
+            <span aria-hidden="true">—</span>
+            <input type="date" aria-label="Конец периода" value={period.to}
+              onChange={(e) => setPeriod({ ...period, to: e.target.value })} />
+          </span>
+          <span className="sep" aria-hidden="true" />
+          <button className="btn secondary" onClick={() => setFilterOpen(true)}>
+            <Icon name="filter" size={14} /> Фильтр
+            {conds.length > 0 && <span className="num">{conds.length}</span>}
+          </button>
+          <ColumnsButton columns={columns} visible={visibleCols} onChange={setVisibleCols} />
+          {isAdmin && (
+            <button className="btn" onClick={() => setEditScreen({ orientation: 'horizontal', loop_duration_sec: 60, work_from: '06:00', work_to: '24:00', status: 'active', side: 'А' })}>
+              <Icon name="plus" size={14} /> Добавить экран
+            </button>
+          )}
+        </div>
       </div>
 
-      {error && <div className="error-box">{error}</div>}
+      <div className="page-sub">
+        Кликните название экрана — откроется занятость по месяцам и загрузка петли.
+        Показатель «Загрузка петли» — пиковый день выбранного периода.
+      </div>
+
+      {error && <Alert tone="error">{error}</Alert>}
+
+      <div className="summary-cards">
+        <div className="scard"><div className="l">Экранов в выборке</div><div className="v">{filtered.length} <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>из {rows.length}</span></div></div>
+        <div className="scard"><div className="l">Средняя загрузка</div><div className="v">{summary.avg}%</div></div>
+        <div className="scard"><div className="l">Свободно секунд</div><div className="v">{summary.freeSec}</div></div>
+        <div className="scard"><div className="l">Петля заполнена</div><div className="v">{summary.full}</div></div>
+      </div>
 
       {conds.length > 0 && (
         <div className="filter-chips">
           {conds.map((c, i) => {
             const f = FILTER_FIELDS.find((x) => x.key === c.field);
-            const opLabel = { contains: 'содержит', eq: '=', gte: '≥', lte: '≤' }[c.op];
             return (
               <span className="chip" key={i}>
-                {f?.label} {opLabel} «{c.value}»
-                <button onClick={() => setConds(conds.filter((_, j) => j !== i))}>✕</button>
+                {f?.label} {OP_LABELS[c.op]} <b>{f?.type === 'select' ? STATUS_RU[c.value] ?? c.value : c.value}</b>
+                <button onClick={() => setConds(conds.filter((_, j) => j !== i))}
+                  aria-label={`Убрать фильтр «${f?.label}»`}>
+                  <Icon name="close" size={12} />
+                </button>
               </span>
             );
           })}
-          <span className="chip"><button onClick={() => setConds([])}>Сбросить все ✕</button></span>
+          <button className="chip reset" onClick={() => setConds([])}>Сбросить всё</button>
         </div>
       )}
 
-      <div className="page-sub">Показано {filtered.length} из {rows.length} экранов. Загрузка петли — максимум за выбранный период.</div>
-
-      <DataTable variant="inventory" columns={columns} rows={filtered} visibleKeys={[...visibleCols, 'code', 'name', 'side', 'city_name', 'load', 'status', 'actions']} />
+      <DataTable
+        variant="inventory"
+        caption="Инвентарь LED-экранов"
+        columns={columns}
+        rows={filtered}
+        visibleKeys={[...visibleCols, 'code', 'name', 'side', 'city_name', 'load', 'status', 'actions']}
+        emptyText="Ни один экран не подходит под фильтр"
+        emptyHint="Измените условия или сбросьте фильтр."
+      />
 
       {filterOpen && (
         <FilterModal conds={conds} onApply={(c) => { setConds(c); setFilterOpen(false); }} onClose={() => setFilterOpen(false)} />
@@ -175,42 +239,46 @@ function FilterModal(props: { conds: FilterCond[]; onApply: (c: FilterCond[]) =>
   }
 
   return (
-    <Modal title="Фильтр инвентаря" wide onClose={props.onClose}
+    <Modal title="Фильтр инвентаря" subtitle="Экран попадёт в выборку, если выполнены все условия" wide onClose={props.onClose}
       footer={<>
-        <button className="btn secondary" onClick={() => setConds([{ field: 'code', op: 'contains', value: '' }])}>Сбросить</button>
-        <button className="btn" onClick={() => props.onApply(conds.filter((c) => c.value !== ''))}>Применить</button>
+        <button className="btn ghost" style={{ marginRight: 'auto' }}
+          onClick={() => setConds([{ field: 'code', op: 'contains', value: '' }])}>Очистить условия</button>
+        <button className="btn secondary" onClick={props.onClose}>Отмена</button>
+        <button className="btn" onClick={() => props.onApply(conds.filter((c) => c.value !== ''))}>Применить фильтр</button>
       </>}>
       {conds.map((c, i) => {
         const f = FILTER_FIELDS.find((x) => x.key === c.field)!;
         const ops = f.type === 'number' ? [['gte', '≥'], ['lte', '≤'], ['eq', '=']] : [['contains', 'содержит'], ['eq', 'равно']];
         return (
           <div className="filter-row" key={i}>
-            <select value={c.field} onChange={(e) => {
+            <select aria-label="Поле" value={c.field} onChange={(e) => {
               const nf = FILTER_FIELDS.find((x) => x.key === e.target.value)!;
               update(i, { field: e.target.value, op: nf.type === 'number' ? 'gte' : 'contains', value: '' });
             }}>
               {FILTER_FIELDS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
             </select>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <select value={c.op} onChange={(e) => update(i, { op: e.target.value })} style={{ width: 110 }}>
-                {ops.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            <select aria-label="Условие" value={c.op} onChange={(e) => update(i, { op: e.target.value })}>
+              {ops.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            {f.type === 'select' ? (
+              <select aria-label="Значение" value={c.value} onChange={(e) => update(i, { value: e.target.value })}>
+                <option value="">Не выбрано</option>
+                {f.options!.map((o) => <option key={o} value={o}>{STATUS_RU[o]}</option>)}
               </select>
-              {f.type === 'select' ? (
-                <select value={c.value} onChange={(e) => update(i, { value: e.target.value })} style={{ flex: 1 }}>
-                  <option value="">—</option>
-                  {f.options!.map((o) => <option key={o} value={o}>{{ active: 'Активен', maintenance: 'На обслуживании', inactive: 'Отключён' }[o]}</option>)}
-                </select>
-              ) : (
-                <input style={{ flex: 1 }} type={f.type === 'number' ? 'number' : 'text'} value={c.value}
-                  onChange={(e) => update(i, { value: e.target.value })} placeholder="Значение…" />
-              )}
-            </div>
-            <button className="btn small secondary" onClick={() => setConds(conds.filter((_, j) => j !== i))}>✕</button>
+            ) : (
+              <input aria-label="Значение" type={f.type === 'number' ? 'number' : 'text'} value={c.value}
+                onChange={(e) => update(i, { value: e.target.value })} placeholder="Значение" />
+            )}
+            <button className="btn small ghost" onClick={() => setConds(conds.filter((_, j) => j !== i))}
+              aria-label="Удалить условие">
+              <Icon name="close" size={14} />
+            </button>
           </div>
         );
       })}
-      <button className="btn secondary small" onClick={() => setConds([...conds, { field: 'code', op: 'contains', value: '' }])}>
-        + Добавить условие
+      <button className="btn secondary small" style={{ marginTop: 4 }}
+        onClick={() => setConds([...conds, { field: 'code', op: 'contains', value: '' }])}>
+        <Icon name="plus" size={13} /> Добавить условие
       </button>
     </Modal>
   );
@@ -224,7 +292,7 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
   const set = (k: string) => (v: any) => setS((prev: any) => ({ ...prev, [k]: v }));
 
   async function save() {
-    if (!s.code || !s.name) { setError('Код и название обязательны'); return; }
+    if (!s.code || !s.name) { setError('Заполните код и название — по ним экран находят в инвентаре.'); return; }
     setBusy(true); setError('');
     const body: any = { ...s };
     delete body.id; delete body.city_name; delete body.region; delete body.type_name;
@@ -244,20 +312,25 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
   }
 
   async function remove() {
-    if (!confirm('Удалить экран? Действие необратимо.')) return;
+    if (!confirm(`Удалить экран ${s.code}? Действие необратимо.`)) return;
     try { await del(`/screens/${props.screen.id}`); props.onSaved(); }
     catch (e: any) { setError(e.message); }
   }
 
   const d = props.dicts;
   return (
-    <Modal title={props.screen.id ? `Экран ${props.screen.code}` : 'Новый LED-экран'} wide onClose={props.onClose}
+    <Modal
+      title={props.screen.id ? `Экран ${props.screen.code}` : 'Новый LED-экран'}
+      subtitle={props.screen.id ? props.screen.address ?? undefined : 'Экран появится в инвентаре сразу после сохранения'}
+      wide onClose={props.onClose}
       footer={<>
-        {props.screen.id && <button className="btn danger" onClick={remove} style={{ marginRight: 'auto' }}>Удалить</button>}
+        {props.screen.id && <button className="btn danger" onClick={remove} style={{ marginRight: 'auto' }}>
+          <Icon name="trash" size={14} /> Удалить экран
+        </button>}
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
-        <button className="btn" onClick={save} disabled={busy}>{busy ? 'Сохранение…' : 'Сохранить'}</button>
+        <button className="btn" onClick={save} disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить экран'}</button>
       </>}>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
 
       <div className="form-section">
         <h3>Характеристики</h3>
@@ -265,7 +338,7 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
           <TextInput label="Код" required value={s.code} onChange={set('code')} placeholder="GRZLED04001" />
           <TextInput label="Название" required value={s.name} onChange={set('name')} placeholder="Экран «Центр»" />
           <TextInput label="Сторона" value={s.side} onChange={set('side')} placeholder="А"
-            hint="Для двусторонних конструкций: А / Б. Для односторонних — А" />
+            hint="Двусторонняя конструкция: А и Б. Односторонняя — А" />
           <SelectInput label="Тип экрана" value={s.screen_type_id} onChange={set('screen_type_id')}
             options={d.types.map((t: any) => ({ value: t.id, label: t.name }))} />
           <SelectInput label="Ориентация" value={s.orientation} onChange={set('orientation')} allowEmpty={false}
@@ -296,7 +369,7 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
           <TextInput label="Шаг пикселя" value={s.pixel_pitch} onChange={set('pixel_pitch')} placeholder="P6.6" />
           <TextInput label="Яркость, нит" type="number" value={s.brightness} onChange={set('brightness')} />
           <TextInput label="Длина петли, сек" type="number" value={s.loop_duration_sec} onChange={set('loop_duration_sec')}
-            hint="Определяет ёмкость: сколько секунд рекламы вмещает один оборот ротации" />
+            hint="Сколько секунд рекламы вмещает один оборот ротации" />
           <TextInput label="Работает с" value={s.work_from} onChange={set('work_from')} placeholder="06:00" />
           <TextInput label="Работает до" value={s.work_to} onChange={set('work_to')} placeholder="24:00" />
         </div>
@@ -306,9 +379,9 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
         <h3>Финансы</h3>
         <div className="form-grid">
           <TextInput label="Цена за секунду показа, ₽" type="number" step="0.1" value={s.price_per_sec} onChange={set('price_per_sec')}
-            hint="Базовая ставка для калькулятора" />
+            hint="Базовая ставка калькулятора" />
           <TextInput label="Цена за выход (5 сек), ₽" type="number" step="0.1" value={s.price_per_play} onChange={set('price_per_play')}
-            hint="Используется, если не задана цена за секунду" />
+            hint="Применяется, если цена за секунду не задана" />
           <SelectInput label="Налоговый режим" value={s.tax_regime_id} onChange={set('tax_regime_id')}
             options={d.taxes.map((t: any) => ({ value: t.id, label: t.name }))} />
         </div>
@@ -319,19 +392,18 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
         <div className="form-grid">
           <SelectInput label="Владелец конструкции" value={s.owner_id} onChange={set('owner_id')}
             options={d.owners.map((o: any) => ({ value: o.id, label: o.name }))} />
-          <TextInput label="Теги (через запятую)" value={s.tags} onChange={set('tags')} placeholder="центр,трафик" />
-          <Field label="Комментарий">
-            <textarea rows={2} value={s.comment ?? ''} onChange={(e) => set('comment')(e.target.value)} />
-          </Field>
+          <TextInput label="Теги" value={s.tags} onChange={set('tags')} placeholder="центр, трафик" hint="Через запятую" />
+          <TextArea label="Комментарий" value={s.comment} onChange={set('comment')} />
         </div>
       </div>
     </Modal>
   );
 }
 
-// ---------- Занятость экрана: шапка + сетка по месяцам + полоса за месяц ----------
+// ---------- Занятость экрана: шапка + сетка по месяцам + секундная лента ----------
 const MONTHS_SHORT = ['янв', 'февр', 'март', 'апр', 'май', 'июнь', 'июль', 'авг', 'сент', 'окт', 'нояб', 'дек'];
 const MONTHS_FULL = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 
 interface ScheduleSlot {
   id: number; campaign_id: number; duration_sec: number; plays_per_day: number;
@@ -341,6 +413,8 @@ interface ScheduleSlot {
 interface ScheduleData {
   loop_duration_sec: number; year: number; slots: ScheduleSlot[];
 }
+
+const clientKey = (s: ScheduleSlot) => (s.client_id ? `c${s.client_id}` : `n:${s.client_name ?? '—'}`);
 
 function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
   const nav = useNavigate();
@@ -361,7 +435,7 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
     if (!data) return [];
     const map = new Map<string, { key: string; client: string; slots: ScheduleSlot[] }>();
     for (const s of data.slots) {
-      const key = s.client_id ? `c${s.client_id}` : `n:${s.client_name ?? '—'}`;
+      const key = clientKey(s);
       if (!map.has(key)) map.set(key, { key, client: s.client_name ?? 'Без клиента', slots: [] });
       map.get(key)!.slots.push(s);
     }
@@ -377,75 +451,109 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
 
   const loop = data?.loop_duration_sec ?? 0;
 
-  // Загрузка петли за выбранный месяц: пиковый день месяца, сегменты по клиентам
+  // Загрузка петли за выбранный месяц: пиковый день, сегменты по клиентам
   const monthLoad = useMemo(() => {
     if (!data) return null;
     const daysInMonth = new Date(year, selMonth, 0).getDate();
-    let peakUsed = 0, peakSlots: ScheduleSlot[] = [];
+    let peakUsed = 0, peakSlots: ScheduleSlot[] = [], peakDay = 1;
     for (let d = 1; d <= daysInMonth; d++) {
       const iso = `${year}-${String(selMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const active = data.slots.filter((s) => s.date_from <= iso && s.date_to >= iso);
       const u = active.reduce((a, s) => a + s.duration_sec, 0);
-      if (u > peakUsed) { peakUsed = u; peakSlots = active; }
+      if (u > peakUsed) { peakUsed = u; peakSlots = active; peakDay = d; }
     }
-    const byClient = new Map<string, number>();
+    const byClient = new Map<string, { label: string; sec: number; key: string }>();
     for (const s of peakSlots) {
-      const k = s.client_name ?? 'Без клиента';
-      byClient.set(k, (byClient.get(k) ?? 0) + s.duration_sec);
+      const k = clientKey(s);
+      const cur = byClient.get(k) ?? { label: s.client_name ?? 'Без клиента', sec: 0, key: k };
+      cur.sec += s.duration_sec;
+      byClient.set(k, cur);
     }
+    const segments: TapeSegment[] = [...byClient.values()]
+      .sort((a, b) => b.sec - a.sec)
+      .map((c) => ({ label: c.label, sec: c.sec, color: seriesColor(c.key, true) }));
     return {
       used: peakUsed,
+      peakDay,
       free: Math.max(0, loop - peakUsed),
       pct: loop ? Math.round((peakUsed / loop) * 1000) / 10 : 0,
-      segments: [...byClient.entries()].map(([client_name, duration_sec]) => ({ client_name, duration_sec })),
+      segments,
     };
   }, [data, selMonth, year, loop]);
 
+  const tone = monthLoad ? loadTone(monthLoad.pct) : 'good';
+
   return (
-    <Modal title={`Экран ${props.screen.code}`} wide onClose={props.onClose}>
-      {error && <div className="error-box">{error}</div>}
+    <Modal
+      title={`Занятость экрана ${props.screen.code}`}
+      subtitle={`${props.screen.name} · петля ${props.screen.loop_duration_sec} сек`}
+      wide onClose={props.onClose}
+    >
+      {error && <Alert tone="error">{error}</Alert>}
 
       {/* Шапка экрана */}
       <div className="scr-head">
-        <div>{props.screen.city_name ? `г. ${props.screen.city_name}` : '—'}</div>
-        <div>{props.screen.address || props.screen.name}</div>
-        <div>{props.screen.side || '—'}</div>
-        <div className="mono">{props.screen.code}</div>
+        <div>
+          <div className="k">Город</div>
+          <div className="v">{props.screen.city_name ? `г. ${props.screen.city_name}` : '—'}</div>
+        </div>
+        <div>
+          <div className="k">Адрес</div>
+          <div className="v" title={props.screen.address}>{props.screen.address || props.screen.name}</div>
+        </div>
+        <div>
+          <div className="k">Сторона</div>
+          <div className="v">{props.screen.side || '—'}</div>
+        </div>
+        <div>
+          <div className="k">Код экрана</div>
+          <div className="v mono">{props.screen.code}</div>
+        </div>
       </div>
 
       {/* Сетка по месяцам */}
       {data && (
         <div className="sgrid-wrap">
-          {/* шапка: «+» и месяцы (кликабельны) */}
           <div className="sgrid-row sgrid-head">
             <div className="sgrid-corner">
-              <button className="sgrid-plus" title="Добавить клиента на экран" onClick={() => setAddOpen(true)}>+</button>
+              <button className="sgrid-plus" title="Добавить клиента на экран"
+                aria-label="Добавить клиента на экран" onClick={() => setAddOpen(true)}>
+                <Icon name="plus" size={16} />
+              </button>
+              <span className="eyebrow">Клиенты<br />{year}</span>
             </div>
             {MONTHS_SHORT.map((m, i) => (
-              <div key={i} className={'sgrid-month' + (selMonth === i + 1 ? ' sel' : '')}
-                title={`Показать загрузку за ${MONTHS_FULL[i]}`} onClick={() => setSelMonth(i + 1)}>{m}</div>
+              <button key={i} className={'sgrid-month' + (selMonth === i + 1 ? ' sel' : '')}
+                aria-pressed={selMonth === i + 1}
+                title={`Показать загрузку за ${MONTHS_FULL[i]}`} onClick={() => setSelMonth(i + 1)}>{m}</button>
             ))}
           </div>
           {rows.length === 0 && (
             <div className="sgrid-row">
-              <div className="sgrid-client muted">Нет размещений</div>
+              <div className="sgrid-client muted">Размещений в {year} году нет</div>
               {MONTHS_SHORT.map((_, i) => <div key={i} className={'sgrid-cell' + (selMonth === i + 1 ? ' sel' : '')} />)}
             </div>
           )}
           {rows.map((row) => (
             <div key={row.key} className="sgrid-row">
-              <div className="sgrid-client">{row.client}</div>
+              <div className="sgrid-client">
+                <span className="sw" style={{ background: seriesColor(row.key) }} aria-hidden="true" />
+                <span className="nm" title={row.client}>{row.client}</span>
+              </div>
               {MONTHS_SHORT.map((_, i) => (
                 <div key={i} className={'sgrid-cell' + (selMonth === i + 1 ? ' sel' : '')}
                   style={{ gridColumn: i + 2 }} onClick={() => setSelMonth(i + 1)} />
               ))}
               {row.slots.map((s) => {
                 const { startM, endM } = monthSpan(s);
+                const bg = seriesColor(row.key);
                 return (
-                  <div key={s.id} className="sgrid-bar"
-                    style={{ gridColumn: `${startM + 1} / ${endM + 2}`, gridRow: 1 }}
+                  <button key={s.id} className={'sgrid-bar' + (s.status === 'reserved' ? ' pending' : '')}
+                    style={{ gridColumn: `${startM + 1} / ${endM + 2}`, gridRow: 1, background: bg, color: onColor(bg) }}
                     title={`${row.client} · кампания ${s.campaign_number}\n${fmtDate(s.date_from)} — ${fmtDate(s.date_to)}\n${s.duration_sec} сек × ${s.plays_per_day || '—'}/сут · ${s.time_slot_name ?? 'весь день'}`}
-                    onClick={() => nav(`/campaigns/${s.campaign_id}`)} />
+                    onClick={() => nav(`/campaigns/${s.campaign_id}`)}>
+                    {s.duration_sec} сек
+                  </button>
                 );
               })}
             </div>
@@ -453,45 +561,44 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
         </div>
       )}
 
-      {/* Полоса загруженности за выбранный месяц */}
+      {/* Секундная лента за выбранный месяц */}
       {data && monthLoad && (
-        <div className="loopbar">
-          <div className="loopbar-head">
-            <b>Загрузка экрана — {MONTHS_FULL[selMonth - 1]} {year}</b>
-            <span className="muted">петля {loop} сек · заполнено {monthLoad.pct}%</span>
+        <div style={{ marginTop: 20 }}>
+          <div className="tape-readout">
+            <div>
+              <span className="eyebrow">Загрузка петли — {MONTHS_FULL[selMonth - 1]} {year}</span>
+              <div className={`big is-${tone}`}>{monthLoad.pct}%</div>
+            </div>
+            <div className="side">
+              занято <b>{monthLoad.used}</b> из <b>{loop}</b> сек · свободно <b>{monthLoad.free}</b> сек
+              {monthLoad.used > 0 && (
+                <><br /><span className="muted">пиковый день — {monthLoad.peakDay} {MONTHS_GEN[selMonth - 1]}</span></>
+              )}
+            </div>
           </div>
-          <div className="loopbar-labels">
-            <span>{monthLoad.used} сек</span>
-            <span>свободно {monthLoad.free} / {loop} сек</span>
-          </div>
-          <div className="loopbar-track">
-            {monthLoad.segments.map((seg, i) => (
-              <div key={i} className="loopbar-seg"
-                style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
-                title={`${seg.client_name}: ${seg.duration_sec} сек`} />
-            ))}
-          </div>
-          <div className="loopbar-chips">
-            {monthLoad.segments.map((seg, i) => (
-              <div key={i} className="loopbar-chip" style={{ width: `${loop ? (seg.duration_sec / loop) * 100 : 0}%` }}
-                title={`${seg.client_name}: ${seg.duration_sec} сек`}>{seg.client_name}</div>
-            ))}
-            {monthLoad.segments.length === 0 && <span className="muted" style={{ fontSize: 12, padding: '4px 8px' }}>Петля свободна — размещений в этом месяце нет</span>}
-          </div>
+          <LoopTape loop={loop} segments={monthLoad.segments} />
+          <LoopRuler loop={loop} />
+          <TapeLegend segments={monthLoad.segments} free={monthLoad.free} loop={loop} />
         </div>
       )}
 
       <div className="sgrid-foot">
-        <button className="btn secondary small" onClick={() => setYear(year - 1)}>‹ {year - 1}</button>
-        <b>{year}</b>
-        <button className="btn secondary small" onClick={() => setYear(year + 1)}>{year + 1} ›</button>
-        <span className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-          Кликните месяц — увидите загрузку экрана за него. Полоса-период — клиент; клик по ней открывает кампанию.
+        <span className="year-switch">
+          <button onClick={() => setYear(year - 1)} aria-label={`Показать ${year - 1} год`}>
+            <Icon name="chevronLeft" size={14} />
+          </button>
+          <span className="y">{year}</span>
+          <button onClick={() => setYear(year + 1)} aria-label={`Показать ${year + 1} год`}>
+            <Icon name="chevronRight" size={14} />
+          </button>
+        </span>
+        <span className="muted" style={{ fontSize: 12 }}>
+          Полоса — период размещения клиента; клик открывает кампанию. Штриховка означает бронь.
         </span>
       </div>
 
       {addOpen && (
-        <AddClientToScreenModal screen={props.screen} year={year}
+        <AddClientToScreenModal screen={props.screen} year={year} month={selMonth}
           onClose={() => setAddOpen(false)}
           onBooked={() => { setAddOpen(false); load(); }} />
       )}
@@ -500,12 +607,14 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
 }
 
 // ---------- Добавление клиента на экран (быстрое бронирование) ----------
-function AddClientToScreenModal(props: { screen: Screen; year: number; onClose: () => void; onBooked: () => void }) {
+function AddClientToScreenModal(props: { screen: Screen; year: number; month: number; onClose: () => void; onBooked: () => void }) {
   const [clients, setClients] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<any[]>([]);
+  const lastDay = new Date(props.year, props.month, 0).getDate();
+  const mm = String(props.month).padStart(2, '0');
   const [form, setForm] = useState<any>({
     client_id: '', duration_sec: 10, plays_per_day: 720,
-    date_from: `${props.year}-01-01`, date_to: `${props.year}-03-31`, time_slot_id: '',
+    date_from: `${props.year}-${mm}-01`, date_to: `${props.year}-${mm}-${lastDay}`, time_slot_id: '',
   });
   const [capacity, setCapacity] = useState<any | null>(null);
   const [calc, setCalc] = useState<any | null>(null);
@@ -535,7 +644,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; onClose: 
   }, [form.duration_sec, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id]);
 
   async function book() {
-    if (!form.client_id) { setError('Выберите клиента'); return; }
+    if (!form.client_id) { setError('Выберите клиента — на него будет оформлена бронь.'); return; }
     setBusy(true); setError('');
     try {
       await post(`/screens/${props.screen.id}/book`, {
@@ -549,45 +658,52 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; onClose: 
 
   const blocked = capacity && !capacity.ok;
   return (
-    <Modal title={`Добавить клиента — ${props.screen.code}`} onClose={props.onClose}
+    <Modal title="Добавить клиента на экран" subtitle={`${props.screen.code} · петля ${props.screen.loop_duration_sec} сек`}
+      onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
         <button className="btn" onClick={book} disabled={busy || !form.client_id || !!blocked}>
-          Забронировать{calc ? ` — ${fmtMoney(calc.total)}` : ''}
+          {busy ? 'Бронируем…' : `Забронировать${calc ? ` — ${fmtMoney(calc.total)}` : ''}`}
         </button>
       </>}>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div className="form-grid">
         <SelectInput label="Клиент" required value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
           options={clients.map((c) => ({ value: c.id, label: c.name }))} />
-        <SelectInput label="Длительность ролика, сек" required value={form.duration_sec} allowEmpty={false}
+        <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={(v) => setForm({ ...form, duration_sec: v })}
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
         <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day} onChange={(v) => setForm({ ...form, plays_per_day: v })} />
         <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
         <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
         <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
+          hint="Часть суток; влияет на цену"
           options={timeSlots.map((t) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
       </div>
 
       {capacity && (
-        <div className={capacity.ok ? 'ok-box' : 'error-box'} style={{ marginTop: 14 }}>
-          {capacity.ok
-            ? `Ролик помещается. Загрузка петли на периоде: до ${capacity.load.max_load_pct}% (свободно ${capacity.load.free_sec} из ${capacity.load.loop_duration_sec} сек).`
-            : capacity.reason}
+        <div style={{ marginTop: 16 }}>
+          {capacity.ok ? (
+            <Alert tone="ok">
+              Ролик помещается: загрузка петли за период дойдёт до {capacity.load.max_load_pct}%,
+              свободно {capacity.load.free_sec} из {capacity.load.loop_duration_sec} сек.
+            </Alert>
+          ) : (
+            <Alert tone="error">{capacity.reason}</Alert>
+          )}
         </div>
       )}
       {calc && (
-        <div className="panel" style={{ marginTop: 12, marginBottom: 0 }}>
+        <div className="panel" style={{ marginTop: 4, marginBottom: 0 }}>
           <dl className="kv">
             <dt>Дней в периоде</dt><dd>{calc.days}</dd>
             <dt>Стоимость размещения</dt><dd><b>{fmtMoney(calc.total)}</b></dd>
           </dl>
         </div>
       )}
-      <div className="page-sub" style={{ marginTop: 10, marginBottom: 0 }}>
-        Будет создана кампания-бронь для клиента. Продажу и оплату оформляйте в карточке кампании.
-      </div>
+      <p className="page-sub" style={{ marginTop: 12, marginBottom: 0 }}>
+        Будет создана кампания в статусе «Бронь». Продажу и оплату оформите в карточке кампании.
+      </p>
     </Modal>
   );
 }
@@ -606,56 +722,98 @@ function PlaylistModal(props: { screen: Screen; onClose: () => void }) {
     get(`/screens/${props.screen.id}/availability?from=${range.from}&to=${range.to}`).then(setAvail).catch(() => setAvail(null));
   }, [range.from, range.to]);
 
+  const loop = props.screen.loop_duration_sec;
   const used = playlist.reduce((a, p) => a + p.duration_sec, 0);
+  const segments: TapeSegment[] = playlist.map((p) => ({
+    label: p.client_name ?? p.campaign_number,
+    sec: p.duration_sec,
+    color: seriesColor(p.client_id ? `c${p.client_id}` : `n:${p.client_name ?? '—'}`, true),
+  }));
+
   return (
-    <Modal title={`${props.screen.code} — плейлист и загрузка петли`} wide onClose={props.onClose}>
+    <Modal title={`Плейлист ${props.screen.code}`} subtitle={`${props.screen.name} · петля ${loop} сек`} wide onClose={props.onClose}>
       <div className="panel">
-        <h3>Загрузка петли по дням</h3>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-          <input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
-          <span>—</span>
-          <input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
-          {avail && <span className="muted" style={{ marginLeft: 10 }}>
-            Максимум: <b>{avail.max_load_pct}%</b> · Свободно: <b>{avail.free_sec} сек</b> из {avail.loop_duration_sec}
-          </span>}
-        </div>
+        <h3>
+          Загрузка петли по дням
+          <span className="field-inline" style={{ marginLeft: 'auto', fontWeight: 400 }}>
+            <input type="date" aria-label="Начало периода" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
+            <span aria-hidden="true">—</span>
+            <input type="date" aria-label="Конец периода" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+          </span>
+        </h3>
         {avail && (
-          <div className="days-strip">
-            {avail.days.map((day: any) => {
-              const color = day.load_pct >= 95 ? '#d05555' : day.load_pct >= 70 ? '#e8a13c' : day.load_pct > 0 ? '#3ca55c' : '#c3cad4';
-              return (
-                <div key={day.date} className="day-cell" style={{ background: color }}
-                  title={`${fmtDate(day.date)}: занято ${day.used_sec} сек (${day.load_pct}%)`}>
-                  <div>{day.date.slice(8)}</div>
-                  <div style={{ fontWeight: 700 }}>{Math.round(day.load_pct)}</div>
-                </div>
-              );
-            })}
-          </div>
+          <>
+            <div className="days-strip">
+              {avail.days.map((day: any) => {
+                const tone = day.load_pct > 0 ? loadTone(day.load_pct) : null;
+                const color = tone === 'crit' ? '#d03b3b' : tone === 'warn' ? '#fab219' : tone === 'good' ? '#0ca30c' : 'transparent';
+                return (
+                  <div key={day.date} className="day-cell"
+                    title={`${fmtDate(day.date)}: занято ${day.used_sec} сек из ${avail.loop_duration_sec} (${day.load_pct}%)`}>
+                    <span className="d">{day.date.slice(8)}</span>
+                    <span className="bar" style={{ background: color, boxShadow: tone ? 'none' : 'inset 0 0 0 1px rgba(231,235,242,.22)' }}>
+                      {tone ? Math.round(day.load_pct) : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
+              Пик за период — <b>{avail.max_load_pct}%</b>, свободно <b>{avail.free_sec} сек</b> из {avail.loop_duration_sec}.
+            </p>
+          </>
         )}
       </div>
 
       <div className="panel" style={{ marginBottom: 0 }}>
-        <h3 style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <h3>
           Ротация на дату
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="date" aria-label="Дата ротации" value={date} onChange={(e) => setDate(e.target.value)} />
           <span className="muted" style={{ fontWeight: 400, fontSize: 12.5 }}>
-            занято {used} из {props.screen.loop_duration_sec} сек петли
+            занято {used} из {loop} сек
           </span>
         </h3>
-        <div className="table-wrap">
+
+        <LoopTape loop={loop} segments={segments} slim />
+        <LoopRuler loop={loop} />
+
+        <div className="table-wrap" style={{ marginTop: 16 }}>
           <table className="data">
-            <thead><tr><th>#</th><th>Кампания</th><th>Клиент</th><th>Ролик</th><th>Длит., сек</th><th>Выходов/сут</th><th>Тайм-слот</th><th>Период</th><th>Статус</th></tr></thead>
+            <thead><tr>
+              <th scope="col"><span className="th-btn">#</span></th>
+              <th scope="col"><span className="th-btn">Кампания</span></th>
+              <th scope="col"><span className="th-btn">Клиент</span></th>
+              <th scope="col"><span className="th-btn">Ролик</span></th>
+              <th scope="col"><span className="th-btn">Длит., сек</span></th>
+              <th scope="col"><span className="th-btn">Выходов/сут</span></th>
+              <th scope="col"><span className="th-btn">Тайм-слот</span></th>
+              <th scope="col"><span className="th-btn">Период</span></th>
+              <th scope="col"><span className="th-btn">Статус</span></th>
+            </tr></thead>
             <tbody>
-              {playlist.length === 0 && <tr><td className="empty-row" colSpan={9}>Петля свободна — размещений нет</td></tr>}
+              {playlist.length === 0 && (
+                <tr><td className="empty-row" colSpan={9}>
+                  <span className="empty-state">
+                    <b>Петля свободна</b>
+                    <span>На {fmtDate(date)} размещений нет — все {loop} секунд можно продать.</span>
+                  </span>
+                </td></tr>
+              )}
               {playlist.map((p, i) => (
                 <tr key={p.id}>
-                  <td>{i + 1}</td>
+                  <td className="muted num">{i + 1}</td>
                   <td className="mono">{p.campaign_number}</td>
-                  <td>{p.client_name ?? '—'}</td>
+                  <td>
+                    <span className="tape-legend" style={{ margin: 0 }}>
+                      <span className="item">
+                        <span className="sw" style={{ background: seriesColor(p.client_id ? `c${p.client_id}` : `n:${p.client_name ?? '—'}`) }} />
+                        <b>{p.client_name ?? '—'}</b>
+                      </span>
+                    </span>
+                  </td>
                   <td>{p.creative_name ?? <span className="muted">не загружен</span>}</td>
-                  <td>{p.duration_sec}</td>
-                  <td>{p.plays_per_day || '—'}</td>
+                  <td className="num">{p.duration_sec}</td>
+                  <td className="num">{p.plays_per_day || '—'}</td>
                   <td>{p.time_slot_name ?? 'Весь день'}</td>
                   <td>{fmtDate(p.date_from)} — {fmtDate(p.date_to)}</td>
                   <td><StatusBadge status={p.status} /></td>

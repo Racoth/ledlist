@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { get, post, put, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken } from '../api';
-import { Modal, TextInput, SelectInput, StatusBadge, LoadBar, Field } from '../components/ui';
+import { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken } from '../api';
+import { Modal, TextInput, SelectInput, StatusBadge, LoadBar, Alert, Icon } from '../components/ui';
+
+const METHOD_RU: Record<string, string> = { bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' };
 
 export default function CampaignCard() {
   const { id } = useParams();
-  const nav = useNavigate();
   const [c, setC] = useState<any | null>(null);
   const [tab, setTab] = useState<'placement' | 'creatives' | 'payment'>('placement');
   const [error, setError] = useState('');
@@ -15,7 +16,7 @@ export default function CampaignCard() {
   const load = () => get(`/campaigns/${id}`).then(setC).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
 
-  if (!c) return <div className="page">{error ? <div className="error-box">{error}</div> : 'Загрузка…'}</div>;
+  if (!c) return <div className="page">{error ? <Alert tone="error">{error}</Alert> : <p className="muted">Загружаем кампанию…</p>}</div>;
 
   const placement = c.slots.reduce((a: number, s: any) => a + s.price, 0);
   const total = placement + c.production_cost;
@@ -25,73 +26,115 @@ export default function CampaignCard() {
     setError(''); setOk('');
     try {
       await post(`/campaigns/${id}/status`, { status });
-      setOk(status === 'reserved' ? 'Слоты забронированы — ёмкость петли удержана.' : status === 'sold' ? 'Кампания продана.' : 'Статус обновлён.');
+      setOk(
+        status === 'reserved' ? 'Слоты забронированы — ёмкость петли удержана.'
+        : status === 'sold' ? 'Кампания продана.'
+        : status === 'cancelled' ? 'Кампания отменена, петля освобождена.'
+        : 'Кампания возвращена в черновик.');
       load();
     } catch (e: any) { setError(e.message); }
   }
 
   const transitions: Record<string, { to: string; label: string; cls?: string }[]> = {
-    draft: [{ to: 'reserved', label: 'Забронировать слоты' }, { to: 'cancelled', label: 'Отменить', cls: 'danger' }],
-    reserved: [{ to: 'sold', label: 'Продано (оплачено)' }, { to: 'draft', label: 'Вернуть в черновик', cls: 'secondary' }, { to: 'cancelled', label: 'Отменить', cls: 'danger' }],
-    sold: [{ to: 'cancelled', label: 'Отменить (освободить петлю)', cls: 'danger' }],
+    draft: [{ to: 'reserved', label: 'Забронировать слоты' }, { to: 'cancelled', label: 'Отменить', cls: 'secondary' }],
+    reserved: [{ to: 'sold', label: 'Отметить проданной' }, { to: 'draft', label: 'Вернуть в черновик', cls: 'secondary' }, { to: 'cancelled', label: 'Отменить', cls: 'danger' }],
+    sold: [{ to: 'cancelled', label: 'Отменить и освободить петлю', cls: 'danger' }],
     cancelled: [{ to: 'draft', label: 'Возобновить как черновик', cls: 'secondary' }],
   };
 
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Кампания {c.number} <StatusBadge status={c.status} /></h1>
-        {transitions[c.status]?.map((t) => (
-          <button key={t.to} className={`btn ${t.cls ?? ''}`} onClick={() => setStatus(t.to)}>{t.label}</button>
-        ))}
+        <h1>
+          <span className="mono">{c.number}</span>
+          <StatusBadge status={c.status} />
+        </h1>
+        <div className="toolbar">
+          {transitions[c.status]?.map((t) => (
+            <button key={t.to} className={`btn ${t.cls ?? ''}`} onClick={() => setStatus(t.to)}>{t.label}</button>
+          ))}
+        </div>
       </div>
       <div className="page-sub">
-        <Link to="/campaigns">← к списку кампаний</Link> · Создана {fmtDate(c.created_at)} {c.created_at.slice(11, 16)}
-        {c.status === 'reserved' && c.reserve_until && <> · <b style={{ color: '#c07f18' }}>бронь до {fmtDate(c.reserve_until)}</b></>}
+        <Link to="/campaigns"><Icon name="back" size={12} /> Все кампании</Link>
+        {' · '}создана {fmtDate(c.created_at)} в {c.created_at.slice(11, 16)}
+        {c.status === 'reserved' && c.reserve_until && <> · <b style={{ color: 'var(--warn-ink)' }}>бронь держится до {fmtDate(c.reserve_until)}</b></>}
       </div>
 
-      {error && <div className="error-box">{error}</div>}
-      {ok && <div className="ok-box">{ok}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
+      {ok && <Alert tone="ok">{ok}</Alert>}
 
       <div className="summary-cards">
-        <div className="scard"><div className="v">{c.client_name ?? '—'}</div><div className="l">Клиент</div></div>
-        <div className="scard"><div className="v">{c.manager_name ?? '—'}</div><div className="l">Менеджер</div></div>
-        <div className="scard"><div className="v">{fmtMoney(placement)}</div><div className="l">Размещение</div></div>
-        <div className="scard"><div className="v">{fmtMoney(c.production_cost)}</div><div className="l">Производство ролика</div></div>
-        <div className="scard"><div className="v">{fmtMoney(total)}</div><div className="l">Итого</div></div>
-        <div className="scard"><div className="v" style={{ color: paid >= total && total > 0 ? '#3ca55c' : '#c07f18' }}>{fmtMoney(paid)}</div><div className="l">Оплачено</div></div>
+        <div className="scard"><div className="l">Клиент</div><div className="v" style={{ fontSize: 15 }}>{c.client_name ?? '—'}</div></div>
+        <div className="scard"><div className="l">Менеджер</div><div className="v" style={{ fontSize: 15 }}>{c.manager_name ?? '—'}</div></div>
+        <div className="scard is-money"><div className="l">Размещение</div><div className="v">{fmtMoney(placement)}</div></div>
+        <div className="scard is-money"><div className="l">Производство ролика</div><div className="v">{fmtMoney(c.production_cost)}</div></div>
+        <div className="scard is-money"><div className="l">Итого</div><div className="v">{fmtMoney(total)}</div></div>
+        <div className="scard is-money">
+          <div className="l">Оплачено</div>
+          <div className={'v ' + (paid >= total && total > 0 ? 'paid-full' : paid > 0 ? 'paid-part' : '')}>{fmtMoney(paid)}</div>
+        </div>
       </div>
 
-      <div className="tabs">
-        <button className={`tab ${tab === 'placement' ? 'active' : ''}`} onClick={() => setTab('placement')}>Размещение ({c.slots.length})</button>
-        <button className={`tab ${tab === 'creatives' ? 'active' : ''}`} onClick={() => setTab('creatives')}>Креативы ({c.creatives.length})</button>
-        <button className={`tab ${tab === 'payment' ? 'active' : ''}`} onClick={() => setTab('payment')}>Оплата ({c.payments.length})</button>
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'placement'} className={`tab ${tab === 'placement' ? 'active' : ''}`} onClick={() => setTab('placement')}>
+          Размещение <span className="count">{c.slots.length}</span>
+        </button>
+        <button role="tab" aria-selected={tab === 'creatives'} className={`tab ${tab === 'creatives' ? 'active' : ''}`} onClick={() => setTab('creatives')}>
+          Креативы <span className="count">{c.creatives.length}</span>
+        </button>
+        <button role="tab" aria-selected={tab === 'payment'} className={`tab ${tab === 'payment' ? 'active' : ''}`} onClick={() => setTab('payment')}>
+          Оплата <span className="count">{c.payments.length}</span>
+        </button>
       </div>
 
       {tab === 'placement' && (
         <>
           <div style={{ marginBottom: 12 }}>
-            <button className="btn" onClick={() => setSlotOpen(true)}>+ Добавить слот размещения</button>
+            <button className="btn" onClick={() => setSlotOpen(true)}>
+              <Icon name="plus" size={14} /> Добавить слот размещения
+            </button>
           </div>
           <div className="table-wrap">
             <table className="data">
-              <thead><tr><th>Экран</th><th>Ролик</th><th>Длит., сек</th><th>Выходов/сут</th><th>Период</th><th>Тайм-слот</th><th>Цена</th><th></th></tr></thead>
+              <thead><tr>
+                <th scope="col"><span className="th-btn">Экран</span></th>
+                <th scope="col"><span className="th-btn">Ролик</span></th>
+                <th scope="col"><span className="th-btn">Длит., сек</span></th>
+                <th scope="col"><span className="th-btn">Выходов/сут</span></th>
+                <th scope="col"><span className="th-btn">Период</span></th>
+                <th scope="col"><span className="th-btn">Тайм-слот</span></th>
+                <th scope="col"><span className="th-btn">Цена</span></th>
+                <th scope="col"><span className="th-btn" /></th>
+              </tr></thead>
               <tbody>
-                {c.slots.length === 0 && <tr><td className="empty-row" colSpan={8}>Слоты не добавлены. Добавьте размещение на экранах.</td></tr>}
+                {c.slots.length === 0 && (
+                  <tr><td className="empty-row" colSpan={8}>
+                    <span className="empty-state">
+                      <b>Слотов пока нет</b>
+                      <span>Добавьте размещение на экране — калькулятор посчитает стоимость, а проверка покажет, влезает ли ролик в петлю.</span>
+                    </span>
+                  </td></tr>
+                )}
                 {c.slots.map((s: any) => (
                   <tr key={s.id}>
-                    <td><b className="mono">{s.screen_code}</b><br /><span className="muted" style={{ fontSize: 12 }}>{s.screen_name}</span></td>
-                    <td>{s.creative_name ?? <span className="muted">—</span>}</td>
-                    <td>{s.duration_sec}</td>
-                    <td>{s.plays_per_day || '—'}</td>
+                    <td>
+                      <span className="screen-name">
+                        <b className="mono">{s.screen_code}</b>
+                        <span className="addr">{s.screen_name}</span>
+                      </span>
+                    </td>
+                    <td>{s.creative_name ?? <span className="muted">не назначен</span>}</td>
+                    <td className="num">{s.duration_sec}</td>
+                    <td className="num">{s.plays_per_day || '—'}</td>
                     <td>{fmtDate(s.date_from)} — {fmtDate(s.date_to)}</td>
                     <td>{s.time_slot_name ?? 'Весь день'}</td>
-                    <td><b>{fmtMoney(s.price)}</b></td>
+                    <td><b className="num">{fmtMoney(s.price)}</b></td>
                     <td>
-                      <button className="btn small danger" onClick={async () => {
-                        if (!confirm('Удалить слот?')) return;
+                      <button className="btn small ghost" aria-label="Удалить слот" onClick={async () => {
+                        if (!confirm('Удалить слот размещения?')) return;
                         await del(`/slots/${s.id}`); load();
-                      }}>✕</button>
+                      }}><Icon name="trash" size={14} /></button>
                     </td>
                   </tr>
                 ))}
@@ -112,7 +155,7 @@ export default function CampaignCard() {
   );
 }
 
-// ---------- Добавление слота: доступность + калькулятор ----------
+// ---------- Добавление слота: проверка ёмкости + калькулятор ----------
 function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (warning: string | null) => void }) {
   const [screens, setScreens] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<any[]>([]);
@@ -168,56 +211,60 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
 
   const screen = screens.find((s) => String(s.id) === String(form.screen_id));
   const capBlocked = capacity && !capacity.ok && ['reserved', 'sold'].includes(props.campaign.status);
+  const cap = capacity?.load ?? capacity;
+  const forecast = cap?.days
+    ? cap.max_load_pct + (capacity.ok ? Math.round((Number(form.duration_sec) / cap.loop_duration_sec) * 1000) / 10 : 0)
+    : null;
 
   return (
-    <Modal title="Слот размещения в петле" wide onClose={props.onClose}
+    <Modal title="Слот размещения в петле" subtitle={`Кампания ${props.campaign.number}`} wide onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
         <button className="btn" onClick={add} disabled={!form.screen_id || !!capBlocked}>
-          Добавить слот {calc ? `— ${fmtMoney(calc.total)}` : ''}
+          Добавить слот{calc ? ` — ${fmtMoney(calc.total)}` : ''}
         </button>
       </>}>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div className="form-grid">
         <SelectInput label="Экран" required value={form.screen_id} onChange={(v) => setForm({ ...form, screen_id: v })}
           options={screens.filter((s) => s.status === 'active').map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }))} />
-        <SelectInput label="Длительность ролика, сек" required value={form.duration_sec} allowEmpty={false}
+        <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={(v) => setForm({ ...form, duration_sec: v })}
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
         <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day} onChange={(v) => setForm({ ...form, plays_per_day: v })}
           hint={screen ? `≈ ${Math.round(Number(form.plays_per_day || 0) / 18)} в час при 18 ч работы` : undefined} />
         <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
         <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
-        <SelectInput label="Тайм-слот (часть суток)" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
+        <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
+          hint="Часть суток; влияет на цену"
           options={timeSlots.map((t) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
-        <SelectInput label="Ролик (из загруженных)" value={form.creative_id} onChange={(v) => setForm({ ...form, creative_id: v })}
+        <SelectInput label="Ролик" value={form.creative_id} onChange={(v) => setForm({ ...form, creative_id: v })}
+          hint="Из загруженных на вкладке «Креативы»"
           options={props.campaign.creatives.map((cr: any) => ({ value: cr.id, label: cr.filename }))} />
       </div>
 
       {capacity && (
-        <div className="panel" style={{ marginTop: 16, marginBottom: 0, borderColor: capacity.ok ? '#b3dfc2' : '#f0b8b8' }}>
-          <h3>Проверка ёмкости петли</h3>
-          {capacity.ok ? (
-            <div className="ok-box" style={{ marginBottom: 8 }}>
-              Ролик помещается. Загрузка петли на периоде: до {capacity.load.max_load_pct}%
-              (свободно {capacity.load.free_sec} сек из {capacity.load.loop_duration_sec}).
+        <div className="panel" style={{ marginTop: 16, marginBottom: 0 }}>
+          <h3>Ёмкость петли</h3>
+          {capacity.ok
+            ? <Alert tone="ok">Ролик помещается: до {cap.max_load_pct}% загрузки, свободно {cap.free_sec} из {cap.loop_duration_sec} сек.</Alert>
+            : <Alert tone="error">{capacity.reason}</Alert>}
+          {forecast != null && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <LoadBar pct={forecast} loop={cap.loop_duration_sec} />
+              <span className="muted" style={{ fontSize: 12 }}>прогноз с учётом добавляемого ролика</span>
             </div>
-          ) : (
-            <div className="error-box" style={{ marginBottom: 8 }}>{capacity.reason}</div>
           )}
-          {(capacity.load ?? capacity)?.days && (
-            <LoadBar pct={(capacity.load ?? capacity).max_load_pct + (capacity.ok ? Math.round((Number(form.duration_sec) / (capacity.load ?? capacity).loop_duration_sec) * 1000) / 10 : 0)} />
-          )}
-          <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>прогноз с учётом добавляемого ролика</span>
         </div>
       )}
 
       {calc && (
         <div className="panel" style={{ marginTop: 16, marginBottom: 0 }}>
-          <h3>Калькулятор стоимости</h3>
+          <h3>Расчёт стоимости</h3>
           <dl className="kv">
             <dt>Дней в периоде</dt><dd>{calc.days}</dd>
-            <dt>База ({fmtMoney(calc.price_per_sec)}/сек × {form.duration_sec} сек × {form.plays_per_day} вых. × {calc.days} дн.)</dt><dd>{fmtMoney(calc.base)}</dd>
+            <dt>База: {fmtMoney(calc.price_per_sec)}/сек × {form.duration_sec} сек × {form.plays_per_day} вых. × {calc.days} дн.</dt>
+            <dd>{fmtMoney(calc.base)}</dd>
             {calc.coef !== 1 && <><dt>Коэффициент тайм-слота «{calc.time_slot}»</dt><dd>×{calc.coef}</dd></>}
             {calc.discount_percent > 0 && <><dt>Скидка {calc.discount_percent}%</dt><dd>−{fmtMoney(calc.discount_amount)}</dd></>}
             {calc.tax_rate > 0 && <><dt>Налог ({calc.tax_name})</dt><dd>+{fmtMoney(calc.tax)}</dd></>}
@@ -239,7 +286,7 @@ function CreativesTab({ campaign, reload }: { campaign: any; reload: () => void 
     if (!file) return;
     setError(''); setBusy(true);
     try {
-      // валидация: разрешение и длительность считываются в браузере
+      // разрешение и длительность считываются в браузере
       const meta = await readMediaMeta(file);
       await uploadFile(`/campaigns/${campaign.id}/creatives`, file, {
         duration_sec: meta.duration ?? '',
@@ -252,27 +299,49 @@ function CreativesTab({ campaign, reload }: { campaign: any; reload: () => void 
 
   return (
     <div>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div style={{ marginBottom: 12 }}>
-        <label className="btn" style={{ display: 'inline-block' }}>
-          {busy ? 'Загрузка…' : '+ Загрузить ролик (mp4, jpg, png, gif)'}
+        <label className="btn" style={{ display: 'inline-flex' }}>
+          <Icon name="upload" size={14} />
+          {busy ? 'Загружаем…' : 'Загрузить ролик'}
           <input type="file" accept="video/mp4,image/jpeg,image/png,image/gif" style={{ display: 'none' }} onChange={onFile} disabled={busy} />
         </label>
+        <span className="muted" style={{ fontSize: 12.5, marginLeft: 10 }}>mp4, jpg, png, gif</span>
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Файл</th><th>Тип</th><th>Разрешение</th><th>Длительность</th><th>Размер</th><th>Загружен</th><th></th></tr></thead>
+          <thead><tr>
+            <th scope="col"><span className="th-btn">Файл</span></th>
+            <th scope="col"><span className="th-btn">Тип</span></th>
+            <th scope="col"><span className="th-btn">Разрешение</span></th>
+            <th scope="col"><span className="th-btn">Длительность</span></th>
+            <th scope="col"><span className="th-btn">Размер</span></th>
+            <th scope="col"><span className="th-btn">Загружен</span></th>
+            <th scope="col"><span className="th-btn" /></th>
+          </tr></thead>
           <tbody>
-            {campaign.creatives.length === 0 && <tr><td className="empty-row" colSpan={7}>Креативы не загружены</td></tr>}
+            {campaign.creatives.length === 0 && (
+              <tr><td className="empty-row" colSpan={7}>
+                <span className="empty-state">
+                  <b>Роликов нет</b>
+                  <span>Загрузите креатив — его длительность подскажет, сколько секунд петли занять.</span>
+                </span>
+              </td></tr>
+            )}
             {campaign.creatives.map((cr: any) => (
               <tr key={cr.id}>
                 <td><a href={`/api/creatives/${cr.id}/file?token=${getToken()}`} target="_blank" rel="noreferrer">{cr.filename}</a></td>
-                <td>{cr.mime}</td>
-                <td>{cr.width ? `${cr.width}×${cr.height}` : '—'}</td>
-                <td>{cr.duration_sec ? `${Math.round(cr.duration_sec * 10) / 10} сек` : '—'}</td>
-                <td>{cr.size_bytes ? `${(cr.size_bytes / 1024 / 1024).toFixed(1)} МБ` : '—'}</td>
+                <td className="muted">{cr.mime}</td>
+                <td className="mono">{cr.width ? `${cr.width}×${cr.height}` : '—'}</td>
+                <td className="num">{cr.duration_sec ? `${Math.round(cr.duration_sec * 10) / 10} сек` : '—'}</td>
+                <td className="num">{cr.size_bytes ? `${(cr.size_bytes / 1024 / 1024).toFixed(1)} МБ` : '—'}</td>
                 <td>{fmtDate(cr.uploaded_at)}</td>
-                <td><button className="btn small danger" onClick={async () => { if (confirm('Удалить креатив?')) { await del(`/creatives/${cr.id}`); reload(); } }}>✕</button></td>
+                <td>
+                  <button className="btn small ghost" aria-label={`Удалить ${cr.filename}`}
+                    onClick={async () => { if (confirm('Удалить креатив?')) { await del(`/creatives/${cr.id}`); reload(); } }}>
+                    <Icon name="trash" size={14} />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -314,33 +383,50 @@ function PaymentTab({ campaign, reload, total, paid }: { campaign: any; reload: 
     } catch (e: any) { setError(e.message); }
   }
 
+  const left = total - paid;
+
   return (
     <div>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div className="panel">
-        <h3>Добавить платёж {total > paid && <span className="muted" style={{ fontWeight: 400 }}>— остаток {fmtMoney(total - paid)}</span>}</h3>
+        <h3>
+          Провести платёж
+          {left > 0
+            ? <span className="muted" style={{ fontWeight: 400 }}>остаток {fmtMoney(left)}</span>
+            : total > 0 && <span style={{ fontWeight: 400, color: 'var(--good-ink)' }}>кампания оплачена полностью</span>}
+        </h3>
         <div className="form-grid">
           <TextInput label="Дата" type="date" value={form.pay_date} onChange={(v) => setForm({ ...form, pay_date: v })} />
-          <TextInput label="Сумма, ₽" type="number" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} />
+          <TextInput label="Сумма, ₽" type="number" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })}
+            placeholder={left > 0 ? String(Math.round(left)) : ''} />
           <SelectInput label="Способ" value={form.method} allowEmpty={false} onChange={(v) => setForm({ ...form, method: v })}
-            options={[{ value: 'bank', label: 'Банковский перевод' }, { value: 'cash', label: 'Наличные' }, { value: 'card', label: 'Карта' }]} />
+            options={Object.entries(METHOD_RU).map(([value, label]) => ({ value, label }))} />
           <TextInput label="Комментарий" value={form.comment} onChange={(v) => setForm({ ...form, comment: v })} />
         </div>
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 14 }}>
           <button className="btn" onClick={add} disabled={!form.amount}>Провести платёж</button>
         </div>
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Дата</th><th>Сумма</th><th>Способ</th><th>Комментарий</th></tr></thead>
+          <thead><tr>
+            <th scope="col"><span className="th-btn">Дата</span></th>
+            <th scope="col"><span className="th-btn">Сумма</span></th>
+            <th scope="col"><span className="th-btn">Способ</span></th>
+            <th scope="col"><span className="th-btn">Комментарий</span></th>
+          </tr></thead>
           <tbody>
-            {campaign.payments.length === 0 && <tr><td className="empty-row" colSpan={4}>Платежей нет</td></tr>}
+            {campaign.payments.length === 0 && (
+              <tr><td className="empty-row" colSpan={4}>
+                <span className="empty-state"><b>Платежей нет</b><span>Проведите первый — он появится и в общем реестре.</span></span>
+              </td></tr>
+            )}
             {campaign.payments.map((p: any) => (
               <tr key={p.id}>
                 <td>{fmtDate(p.pay_date)}</td>
-                <td><b>{fmtMoney(p.amount)}</b></td>
-                <td>{{ bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' }[p.method as string]}</td>
-                <td>{p.comment ?? '—'}</td>
+                <td><b className="num">{fmtMoney(p.amount)}</b></td>
+                <td>{METHOD_RU[p.method as string]}</td>
+                <td className="muted">{p.comment ?? '—'}</td>
               </tr>
             ))}
           </tbody>

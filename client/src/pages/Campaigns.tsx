@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, post, fmtMoney, fmtDate } from '../api';
-import { DataTable, Modal, SelectInput, StatusBadge, Column, TextInput } from '../components/ui';
+import { DataTable, Modal, SelectInput, StatusBadge, Column, TextInput, Alert, Icon } from '../components/ui';
 
 export interface CampaignRow {
   id: number; number: string; client_id: number | null; client_name?: string;
@@ -26,17 +26,18 @@ export default function Campaigns() {
     { key: 'created_at', title: 'Создан', render: (c) => `${fmtDate(c.created_at)} ${c.created_at.slice(11, 16)}` },
     { key: 'client_name', title: 'Клиент' },
     { key: 'manager_name', title: 'Менеджер' },
-    { key: 'slots_count', title: 'Слотов' },
-    { key: 'placement_cost', title: 'Размещение', sortValue: (c) => c.placement_cost, render: (c) => fmtMoney(c.placement_cost) },
-    { key: 'production_cost', title: 'Производство', sortValue: (c) => c.production_cost, render: (c) => fmtMoney(c.production_cost) },
-    { key: 'total', title: 'Итого', sortValue: (c) => c.placement_cost + c.production_cost, render: (c) => <b>{fmtMoney(c.placement_cost + c.production_cost)}</b> },
-    { key: 'paid', title: 'Оплачено', sortValue: (c) => c.paid, render: (c) => (
-      <span style={{ color: c.paid >= c.placement_cost + c.production_cost && c.paid > 0 ? '#3ca55c' : undefined }}>{fmtMoney(c.paid)}</span>
-    ) },
+    { key: 'slots_count', title: 'Слотов', render: (c) => <span className="num">{c.slots_count}</span> },
+    { key: 'placement_cost', title: 'Размещение', sortValue: (c) => c.placement_cost, render: (c) => <span className="num">{fmtMoney(c.placement_cost)}</span> },
+    { key: 'production_cost', title: 'Производство', sortValue: (c) => c.production_cost, render: (c) => <span className="num">{fmtMoney(c.production_cost)}</span> },
+    { key: 'total', title: 'Итого', sortValue: (c) => c.placement_cost + c.production_cost, render: (c) => <b className="num">{fmtMoney(c.placement_cost + c.production_cost)}</b> },
+    { key: 'paid', title: 'Оплачено', sortValue: (c) => c.paid, render: (c) => {
+      const full = c.paid > 0 && c.paid >= c.placement_cost + c.production_cost;
+      return <span className="num" style={{ color: full ? 'var(--good-ink)' : undefined, fontWeight: full ? 600 : undefined }}>{fmtMoney(c.paid)}</span>;
+    } },
     { key: 'status', title: 'Статус', render: (c) => (
-      <span>
+      <span className="cell-stack" style={{ justifyItems: 'start' }}>
         <StatusBadge status={c.status} />
-        {c.status === 'reserved' && c.reserve_until && <div className="muted" style={{ fontSize: 11.5 }}>до {fmtDate(c.reserve_until)}</div>}
+        {c.status === 'reserved' && c.reserve_until && <span className="sub">до {fmtDate(c.reserve_until)}</span>}
       </span>
     ) },
   ];
@@ -44,17 +45,33 @@ export default function Campaigns() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Заказы / Кампании</h1>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '7px 9px', border: '1px solid var(--border)', borderRadius: 4 }}>
-          <option value="">Все статусы</option>
-          <option value="draft">Черновик</option>
-          <option value="reserved">Бронь</option>
-          <option value="sold">Продано</option>
-          <option value="cancelled">Отменён</option>
-        </select>
-        <button className="btn" onClick={() => setCreateOpen(true)}>+ Новая кампания</button>
+        <h1>Заказы и кампании</h1>
+        <div className="toolbar">
+          <select className="plain" aria-label="Фильтр по статусу" value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">Все статусы</option>
+            <option value="draft">Черновик</option>
+            <option value="reserved">Бронь</option>
+            <option value="sold">Продано</option>
+            <option value="cancelled">Отменён</option>
+          </select>
+          <button className="btn" onClick={() => setCreateOpen(true)}>
+            <Icon name="plus" size={14} /> Новая кампания
+          </button>
+        </div>
       </div>
-      <DataTable columns={columns} rows={filtered} onRowClick={(c) => nav(`/campaigns/${c.id}`)} />
+      <div className="page-sub">
+        Кампания собирает слоты в петлях экранов. Пока она в черновике, ёмкость не удерживается —
+        бронь и продажа проверяют петлю целиком.
+      </div>
+      <DataTable
+        caption="Кампании"
+        columns={columns}
+        rows={filtered}
+        onRowClick={(c) => nav(`/campaigns/${c.id}`)}
+        emptyText={statusFilter ? 'В этом статусе кампаний нет' : 'Кампаний пока нет'}
+        emptyHint={statusFilter ? 'Снимите фильтр по статусу.' : 'Создайте первую — или забронируйте клиента прямо из инвентаря экранов.'}
+      />
       {createOpen && <CreateCampaignModal onClose={() => setCreateOpen(false)} onCreated={(id) => nav(`/campaigns/${id}`)} />}
     </div>
   );
@@ -88,12 +105,12 @@ export function CreateCampaignModal(props: { onClose: () => void; onCreated: (id
   }
 
   return (
-    <Modal title="Новая рекламная кампания" onClose={props.onClose}
+    <Modal title="Новая рекламная кампания" subtitle="Номер присвоится автоматически" onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
         <button className="btn" onClick={create}>Создать черновик</button>
       </>}>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div className="form-grid">
         <SelectInput label="Клиент (рекламодатель)" value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
           options={clients.map((c) => ({ value: c.id, label: c.name }))} />

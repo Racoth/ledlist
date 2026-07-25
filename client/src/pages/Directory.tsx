@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { get, post, put, del } from '../api';
-import { DataTable, Modal, TextInput, Column, Field } from '../components/ui';
+import { DataTable, Modal, TextInput, TextArea, Column, Alert, Icon } from '../components/ui';
 
 interface FieldDef { key: string; label: string; type?: string; wide?: boolean }
 
@@ -21,13 +21,15 @@ function CrudPage(props: {
   const columns: Column<any>[] = [
     ...props.fields.map((f) => ({ key: f.key, title: f.label })),
     ...(props.extraColumns ?? []),
-    { key: '_actions', title: '', render: (r) => (
+    { key: '_actions', title: '', sortable: false, render: (r) => (
       <span className="actions-cell" onClick={(e) => e.stopPropagation()}>
-        <button className="btn small secondary" onClick={() => setEdit(r)}>Изменить</button>
-        <button className="btn small danger" onClick={async () => {
-          if (!confirm('Удалить запись?')) return;
+        <button className="btn small secondary" onClick={() => setEdit(r)}>
+          <Icon name="edit" size={13} /> Изменить
+        </button>
+        <button className="btn small ghost" aria-label={`Удалить «${r.name}»`} onClick={async () => {
+          if (!confirm(`Удалить «${r.name}»? Действие необратимо.`)) return;
           try { await del(`${props.endpoint}/${r.id}`); load(); } catch (e: any) { setError(e.message); }
-        }}>✕</button>
+        }}><Icon name="trash" size={14} /></button>
       </span>
     ) },
   ];
@@ -47,22 +49,24 @@ function CrudPage(props: {
     <div className="page">
       <div className="page-head">
         <h1>{props.title}</h1>
-        <button className="btn" onClick={() => setEdit({})}>+ Добавить</button>
+        <button className="btn" onClick={() => setEdit({})}>
+          <Icon name="plus" size={14} /> Добавить
+        </button>
       </div>
       {props.subtitle && <div className="page-sub">{props.subtitle}</div>}
-      {error && <div className="error-box">{error}</div>}
-      <DataTable columns={columns} rows={rows} onRowClick={(r) => setEdit(r)} />
+      {error && <Alert tone="error">{error}</Alert>}
+      <DataTable caption={props.title} columns={columns} rows={rows} onRowClick={(r) => setEdit(r)}
+        emptyText="Записей пока нет" emptyHint="Нажмите «Добавить», чтобы создать первую." />
       {edit && (
-        <Modal title={edit.id ? 'Изменить запись' : 'Новая запись'} onClose={() => setEdit(null)}
+        <Modal title={edit.id ? `Изменить: ${edit.name ?? 'запись'}` : 'Новая запись'} onClose={() => setEdit(null)}
           footer={<>
             <button className="btn secondary" onClick={() => setEdit(null)}>Отмена</button>
             <button className="btn" onClick={save}>Сохранить</button>
           </>}>
           <div className="form-grid">
             {props.fields.map((f) => f.type === 'textarea' ? (
-              <Field key={f.key} label={f.label}>
-                <textarea rows={2} value={edit[f.key] ?? ''} onChange={(e) => setEdit({ ...edit, [f.key]: e.target.value })} />
-              </Field>
+              <TextArea key={f.key} label={f.label} value={edit[f.key]}
+                onChange={(v) => setEdit({ ...edit, [f.key]: v })} />
             ) : (
               <TextInput key={f.key} label={f.label} type={f.type} value={edit[f.key]}
                 onChange={(v) => setEdit({ ...edit, [f.key]: v })} />

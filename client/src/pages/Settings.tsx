@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { get, post, put, del } from '../api';
-import { Modal, TextInput } from '../components/ui';
+import { Modal, TextInput, Alert, Icon } from '../components/ui';
 
 interface DictField { key: string; label: string; type?: string }
 interface DictDef { key: string; title: string; endpoint: string; fields: DictField[] }
@@ -24,10 +24,13 @@ export default function Settings() {
   return (
     <div className="page">
       <div className="page-head"><h1>Настройки</h1></div>
-      <div className="tabs">
-        <button className={`tab ${tab === 'company' ? 'active' : ''}`} onClick={() => setTab('company')}>Данные о компании</button>
+      <div className="page-sub">Реквизиты компании и справочники, из которых собираются экраны и кампании.</div>
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'company'} className={`tab ${tab === 'company' ? 'active' : ''}`}
+          onClick={() => setTab('company')}>Данные о компании</button>
         {DICTS.map((d) => (
-          <button key={d.key} className={`tab ${tab === d.key ? 'active' : ''}`} onClick={() => setTab(d.key)}>{d.title}</button>
+          <button key={d.key} role="tab" aria-selected={tab === d.key} className={`tab ${tab === d.key ? 'active' : ''}`}
+            onClick={() => setTab(d.key)}>{d.title}</button>
         ))}
       </div>
       {tab === 'company' && <CompanyTab />}
@@ -56,8 +59,8 @@ function CompanyTab() {
 
   return (
     <div className="panel" style={{ maxWidth: 720 }}>
-      {ok && <div className="ok-box">{ok}</div>}
-      {error && <div className="error-box">{error}</div>}
+      {ok && <Alert tone="ok">{ok}</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div className="form-grid">
         <TextInput label="Юридическое название" value={form.legal_name} onChange={(v) => setForm({ ...form, legal_name: v })} />
         <TextInput label="ИНН" value={form.inn} onChange={(v) => setForm({ ...form, inn: v })} />
@@ -94,23 +97,32 @@ function DictTab({ def }: { def: DictDef }) {
 
   return (
     <div style={{ maxWidth: 860 }}>
-      {error && <div className="error-box">{error}</div>}
+      {error && <Alert tone="error">{error}</Alert>}
       <div style={{ marginBottom: 12 }}>
-        <button className="btn" onClick={() => setEdit({})}>+ Добавить</button>
+        <button className="btn" onClick={() => setEdit({})}>
+          <Icon name="plus" size={14} /> Добавить
+        </button>
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr>{def.fields.map((f) => <th key={f.key}>{f.label}</th>)}<th></th></tr></thead>
+          <thead><tr>
+            {def.fields.map((f) => <th key={f.key} scope="col"><span className="th-btn">{f.label}</span></th>)}
+            <th scope="col"><span className="th-btn" /></th>
+          </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td className="empty-row" colSpan={def.fields.length + 1}>Пусто</td></tr>}
+            {rows.length === 0 && (
+              <tr><td className="empty-row" colSpan={def.fields.length + 1}>
+                <span className="empty-state"><b>Справочник пуст</b><span>Добавьте первую запись — она станет доступна в формах.</span></span>
+              </td></tr>
+            )}
             {rows.map((r) => (
               <tr key={r.id} className="clickable" onClick={() => setEdit(r)}>
                 {def.fields.map((f) => <td key={f.key}>{r[f.key] ?? '—'}</td>)}
                 <td onClick={(e) => e.stopPropagation()}>
-                  <button className="btn small danger" onClick={async () => {
-                    if (!confirm('Удалить?')) return;
+                  <button className="btn small ghost" aria-label={`Удалить «${r.name}»`} onClick={async () => {
+                    if (!confirm(`Удалить «${r.name}»?`)) return;
                     try { await del(`${def.endpoint}/${r.id}`); load(); } catch (e: any) { setError(e.message); }
-                  }}>✕</button>
+                  }}><Icon name="trash" size={14} /></button>
                 </td>
               </tr>
             ))}
@@ -118,7 +130,7 @@ function DictTab({ def }: { def: DictDef }) {
         </table>
       </div>
       {edit && (
-        <Modal title={def.title} onClose={() => setEdit(null)}
+        <Modal title={edit.id ? `Изменить: ${edit.name ?? def.title}` : def.title} onClose={() => setEdit(null)}
           footer={<>
             <button className="btn secondary" onClick={() => setEdit(null)}>Отмена</button>
             <button className="btn" onClick={save}>Сохранить</button>

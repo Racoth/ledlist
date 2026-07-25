@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { get, post, put, fmtDate } from '../api';
-import { DataTable, Modal, TextInput, Column } from '../components/ui';
+import { DataTable, Modal, TextInput, Column, Alert, Icon } from '../components/ui';
 
 export default function Tenants() {
   const [rows, setRows] = useState<any[]>([]);
@@ -18,16 +18,26 @@ export default function Tenants() {
     { key: 'registered_at', title: 'Дата регистрации', render: (t) => fmtDate(t.registered_at) },
     { key: 'expires_at', title: 'Действует до', render: (t) => {
       const expired = t.expires_at && t.expires_at < new Date().toISOString().slice(0, 10);
-      return <b style={{ color: expired ? '#d05555' : undefined }}>{fmtDate(t.expires_at)}</b>;
+      return (
+        <span className="cell-stack" style={{ justifyItems: 'start' }}>
+          <b className="num">{fmtDate(t.expires_at)}</b>
+          {expired && <span className="badge is-crit"><Icon name="alert" size={11} /> истекла</span>}
+        </span>
+      );
     } },
-    { key: 'screens_count', title: 'Экранов' },
-    { key: 'users_count', title: 'Пользователей' },
+    { key: 'screens_count', title: 'Экранов', render: (t) => <span className="num">{t.screens_count}</span> },
+    { key: 'users_count', title: 'Пользователей', render: (t) => <span className="num">{t.users_count}</span> },
     { key: 'active', title: 'Статус', render: (t) => (
-      <span className="badge" style={{ background: t.active ? '#3ca55c' : '#8a8f98' }}>{t.active ? 'Активна' : 'Заблокирована'}</span>
+      <span className={'badge ' + (t.active ? 'is-good' : 'is-idle')}>
+        <span className="dot" style={{ background: t.active ? '#0ca30c' : '#8b95a5' }} />
+        {t.active ? 'Активна' : 'Заблокирована'}
+      </span>
     ) },
-    { key: '_a', title: '', render: (t) => (
+    { key: '_a', title: '', sortable: false, render: (t) => (
       <span className="actions-cell" onClick={(e) => e.stopPropagation()}>
-        <button className="btn small secondary" onClick={() => setEdit(t)}>Изменить</button>
+        <button className="btn small secondary" onClick={() => setEdit(t)}>
+          <Icon name="edit" size={13} /> Изменить
+        </button>
         <button className="btn small secondary" onClick={async () => { await put(`/tenants/${t.id}`, { active: t.active ? 0 : 1 }); load(); }}>
           {t.active ? 'Заблокировать' : 'Разблокировать'}
         </button>
@@ -51,12 +61,15 @@ export default function Tenants() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Подписки (тенанты)</h1>
-        <button className="btn" onClick={() => setEdit({})}>+ Новая компания</button>
+        <h1>Подписки</h1>
+        <button className="btn" onClick={() => setEdit({})}>
+          <Icon name="plus" size={14} /> Новая компания
+        </button>
       </div>
-      <div className="page-sub">Компании-операторы платформы. Каждая работает в изолированном пространстве данных (tenant).</div>
-      {error && <div className="error-box">{error}</div>}
-      <DataTable columns={columns} rows={rows} />
+      <div className="page-sub">Компании-операторы платформы. Каждая работает в изолированном пространстве данных.</div>
+      {error && <Alert tone="error">{error}</Alert>}
+      <DataTable caption="Компании-операторы" columns={columns} rows={rows}
+        emptyText="Компаний нет" emptyHint="Создайте первую — вместе с ней заведётся её администратор." />
       {edit && (
         <Modal title={edit.id ? `Подписка: ${edit.name}` : 'Новая компания-оператор'} onClose={() => setEdit(null)}
           footer={<>
