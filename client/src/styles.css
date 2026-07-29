@@ -1009,6 +1009,8 @@ input[type='date']:focus, select.plain:focus {
   font-weight: 600;
 }
 .sgrid-client {
+  grid-row: 1;
+  grid-column: 1;
   padding: var(--sp-3) var(--sp-4);
   font-size: 13px;
   color: var(--ink);
@@ -1021,6 +1023,7 @@ input[type='date']:focus, select.plain:focus {
 .sgrid-client .sw { width: 8px; height: 22px; border-radius: 2px; flex-shrink: 0; }
 .sgrid-client .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sgrid-cell {
+  grid-row: 1;
   border-right: 1px solid var(--surface-3);
   min-height: 46px;
   background: var(--surface-2);
