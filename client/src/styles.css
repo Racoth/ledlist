@@ -537,6 +537,28 @@ table.data tr.clickable { cursor: pointer; }
    Формы
    ========================================================================== */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-3) var(--sp-4); }
+
+/* --- Подбор экранов в кампанию -------------------------------------------- */
+.picker { margin: var(--sp-5) 0 var(--sp-4); }
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-2);
+}
+.picker-head .eyebrow { margin-right: auto; }
+.picker-head .field-inline input[type='search'] { width: 190px; }
+.picker-body { max-height: 320px; overflow-y: auto; }
+.picker-body table.data { min-width: 640px; }
+.picker-body thead th { position: sticky; top: 0; z-index: 2; }
+.picker-body td { padding-top: 7px; padding-bottom: 7px; }
+.picker-body td select { padding: 4px 6px; font-size: 12px; width: auto; }
+.picker-body input[type='checkbox'] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--action); }
+.picker-body tr.is-picked td { background: #eef3fb; }
+.cap { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+.cap.ok { color: var(--good-ink); }
+.cap.bad { color: var(--crit-ink); }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .field > label {
   font-size: 12px;

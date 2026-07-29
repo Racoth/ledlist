@@ -55,6 +55,7 @@ function condMatches(s: Screen, c: FilterCond): boolean {
 
 export default function Screens() {
   const user = getUser()!;
+  const nav = useNavigate();
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
   const [rows, setRows] = useState<Screen[]>([]);
   const [dicts, setDicts] = useState<any>({ cities: [], types: [], owners: [], taxes: [] });
@@ -64,6 +65,7 @@ export default function Screens() {
   const [editScreen, setEditScreen] = useState<Partial<Screen> | null>(null);
   const [playlistScreen, setPlaylistScreen] = useState<Screen | null>(null);
   const [scheduleScreen, setScheduleScreen] = useState<Screen | null>(null);
+  const [addClientOpen, setAddClientOpen] = useState(false);
   const [visibleCols, setVisibleCols] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem('screens_cols') ?? 'null') ??
     ['size', 'resolution', 'pitch', 'type_name', 'loop', 'price', 'owner_name']);
@@ -167,6 +169,9 @@ export default function Screens() {
             {conds.length > 0 && <span className="num">{conds.length}</span>}
           </button>
           <ColumnsButton columns={columns} visible={visibleCols} onChange={setVisibleCols} />
+          <button className="btn" onClick={() => setAddClientOpen(true)}>
+            <Icon name="users" size={14} /> Добавить клиента
+          </button>
           {isAdmin && (
             <button className="btn" onClick={() => setEditScreen({ orientation: 'horizontal', loop_duration_sec: 60, work_from: '06:00', work_to: '24:00', status: 'active', side: 'А' })}>
               <Icon name="plus" size={14} /> Добавить экран
@@ -223,6 +228,10 @@ export default function Screens() {
       {editScreen && (
         <ScreenForm screen={editScreen} dicts={dicts} onClose={() => setEditScreen(null)}
           onSaved={() => { setEditScreen(null); load(); }} />
+      )}
+      {addClientOpen && (
+        <AddClientModal screens={rows} onClose={() => setAddClientOpen(false)}
+          onCreated={(id) => { setAddClientOpen(false); nav(`/campaigns/${id}`); }} />
       )}
       {playlistScreen && <PlaylistModal screen={playlistScreen} onClose={() => setPlaylistScreen(null)} />}
       {scheduleScreen && <ScheduleModal screen={scheduleScreen} onClose={() => setScheduleScreen(null)} />}
@@ -704,6 +713,235 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
       <p className="page-sub" style={{ marginTop: 12, marginBottom: 0 }}>
         Будет создана кампания в статусе «Бронь». Продажу и оплату оформите в карточке кампании.
       </p>
+    </Modal>
+  );
+}
+
+// ---------- Добавить клиента: одна кампания сразу на несколько экранов ----------
+function plural(n: number, forms: [string, string, string]) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+
+function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreated: (id: number) => void }) {
+  const [dicts, setDicts] = useState<any>({ clients: [], managers: [], discounts: [], timeSlots: [] });
+  const [form, setForm] = useState<any>({
+    client_id: '', manager_id: '', discount_id: '', discount_percent: 0,
+    date_from: todayISO(), date_to: plusDaysISO(29),
+    duration_sec: 10, plays_per_day: 720, time_slot_id: '', status: 'reserved',
+  });
+  const [sel, setSel] = useState<Record<number, number>>({});
+  const [q, setQ] = useState('');
+  const [quote, setQuote] = useState<any | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    Promise.all([get('/clients'), get('/managers'), get('/discounts'), get('/time-slots')])
+      .then(([clients, managers, discounts, timeSlots]) => setDicts({ clients, managers, discounts, timeSlots }))
+      .catch((e) => setError(e.message));
+  }, []);
+
+  const selKey = JSON.stringify(sel);
+  const selIds = useMemo(() => Object.keys(sel).map(Number), [selKey]);
+
+  // Пакетная проверка ёмкости и расчёт цены по выбранным экранам
+  useEffect(() => {
+    setQuote(null);
+    if (selIds.length === 0 || !form.date_from || !form.date_to || form.date_to < form.date_from) return;
+    const timer = setTimeout(async () => {
+      try {
+        setQuote(await post('/capacity/quote', {
+          date_from: form.date_from, date_to: form.date_to,
+          plays_per_day: Number(form.plays_per_day) || 0,
+          time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
+          discount_percent: Number(form.discount_percent) || 0,
+          screens: selIds.map((id) => ({ screen_id: id, duration_sec: sel[id] })),
+        }));
+      } catch (e: any) { setError(e.message); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [selKey, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id, form.discount_percent]);
+
+  const available = props.screens.filter((s) => s.status === 'active');
+  const shown = available.filter((s) => !q ||
+    `${s.code} ${s.name} ${s.address ?? ''} ${s.city_name ?? ''} ${s.tags ?? ''}`.toLowerCase().includes(q.toLowerCase()));
+
+  const byScreen: Record<number, any> = {};
+  for (const it of quote?.items ?? []) byScreen[it.screen_id] = it;
+  const conflicts = (quote?.items ?? []).filter((i: any) => !i.ok);
+
+  function toggle(id: number) {
+    setSel((prev) => {
+      const next = { ...prev };
+      if (next[id] !== undefined) delete next[id];
+      else next[id] = Number(form.duration_sec);
+      return next;
+    });
+  }
+
+  // Общая длительность применяется ко всем выбранным экранам
+  function setAllDuration(v: string) {
+    const d = Number(v);
+    setForm((f: any) => ({ ...f, duration_sec: v }));
+    setSel((prev) => Object.fromEntries(Object.keys(prev).map((k) => [k, d])));
+  }
+
+  async function submit() {
+    if (!form.client_id) { setError('Выберите клиента.'); return; }
+    if (selIds.length === 0) { setError('Отметьте хотя бы один экран.'); return; }
+    setBusy(true); setError('');
+    try {
+      const r = await post('/campaigns/bulk', {
+        client_id: Number(form.client_id),
+        manager_id: form.manager_id ? Number(form.manager_id) : null,
+        discount_id: form.discount_id ? Number(form.discount_id) : null,
+        discount_percent: Number(form.discount_percent) || 0,
+        date_from: form.date_from, date_to: form.date_to,
+        plays_per_day: Number(form.plays_per_day) || 0,
+        time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
+        status: form.status,
+        screens: selIds.map((id) => ({ screen_id: id, duration_sec: sel[id] })),
+      });
+      props.onCreated(r.campaign_id);
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  }
+
+  const blocked = form.status === 'reserved' && conflicts.length > 0;
+  const total = quote?.total ?? 0;
+
+  return (
+    <Modal title="Добавить клиента" subtitle="Одна кампания сразу на нескольких экранах" wide onClose={props.onClose}
+      footer={<>
+        <span className="muted" style={{ marginRight: 'auto', fontSize: 12.5 }}>
+          {selIds.length > 0
+            ? `${selIds.length} ${plural(selIds.length, ['экран', 'экрана', 'экранов'])}${total ? ` · ${fmtMoney(total)}` : ''}`
+            : 'Экраны не выбраны'}
+        </span>
+        <button className="btn secondary" onClick={props.onClose}>Отмена</button>
+        <button className="btn" onClick={submit} disabled={busy || !form.client_id || selIds.length === 0 || blocked}>
+          {busy ? 'Создаём…' : form.status === 'draft' ? 'Создать черновик' : 'Забронировать'}
+        </button>
+      </>}>
+      {error && <Alert tone="error">{error}</Alert>}
+
+      <div className="form-grid">
+        <SelectInput label="Клиент" required value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
+          options={dicts.clients.map((c: any) => ({ value: c.id, label: c.name }))} />
+        <SelectInput label="Менеджер" value={form.manager_id} onChange={(v) => setForm({ ...form, manager_id: v })}
+          options={dicts.managers.map((m: any) => ({ value: m.id, label: m.name }))} />
+        <SelectInput label="Скидка" value={form.discount_id}
+          onChange={(v) => {
+            const d = dicts.discounts.find((x: any) => String(x.id) === v);
+            setForm({ ...form, discount_id: v, discount_percent: d ? d.percent : 0 });
+          }}
+          hint={form.discount_percent > 0 ? `Применяется −${form.discount_percent}% к размещению` : 'Из справочника скидок'}
+          options={dicts.discounts.map((d: any) => ({ value: d.id, label: `${d.name} (−${d.percent}%)` }))} />
+        <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
+          onChange={setAllDuration} hint="Применяется ко всем выбранным экранам"
+          options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
+        <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day}
+          onChange={(v) => setForm({ ...form, plays_per_day: v })} />
+        <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
+        <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
+        <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
+          hint="Часть суток; влияет на цену"
+          options={dicts.timeSlots.map((t: any) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
+        <SelectInput label="Статус кампании" value={form.status} allowEmpty={false}
+          onChange={(v) => setForm({ ...form, status: v })}
+          hint={form.status === 'draft' ? 'Черновик не удерживает ёмкость петли' : 'Бронь удержит ёмкость петли'}
+          options={[{ value: 'reserved', label: 'Бронь' }, { value: 'draft', label: 'Черновик' }]} />
+      </div>
+
+      <div className="picker">
+        <div className="picker-head">
+          <span className="eyebrow">Экраны размещения</span>
+          <span className="field-inline">
+            <Icon name="search" size={14} />
+            <input type="search" placeholder="Код, адрес, город, тег" aria-label="Поиск по экранам"
+              value={q} onChange={(e) => setQ(e.target.value)} />
+          </span>
+          <button className="btn small secondary" onClick={() => {
+            const d = Number(form.duration_sec);
+            setSel(Object.fromEntries(shown.map((s) => [s.id, d])));
+          }}>Выбрать все ({shown.length})</button>
+          <button className="btn small ghost" onClick={() => setSel({})} disabled={selIds.length === 0}>Снять выбор</button>
+        </div>
+
+        <div className="table-wrap picker-body">
+          <table className="data">
+            <thead>
+              <tr>
+                <th scope="col"><span className="th-btn" /></th>
+                <th scope="col"><span className="th-btn">Код</span></th>
+                <th scope="col"><span className="th-btn">Экран</span></th>
+                <th scope="col"><span className="th-btn">Петля</span></th>
+                <th scope="col"><span className="th-btn">Ролик</span></th>
+                <th scope="col"><span className="th-btn">Стоимость</span></th>
+                <th scope="col"><span className="th-btn">Ёмкость</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.length === 0 && (
+                <tr><td className="empty-row" colSpan={7}>
+                  <span className="empty-state"><b>Экраны не найдены</b><span>Измените строку поиска.</span></span>
+                </td></tr>
+              )}
+              {shown.map((s) => {
+                const on = sel[s.id] !== undefined;
+                const q1 = byScreen[s.id];
+                return (
+                  <tr key={s.id} className={'clickable' + (on ? ' is-picked' : '')} onClick={() => toggle(s.id)}>
+                    <td><input type="checkbox" checked={on} onChange={() => toggle(s.id)}
+                      aria-label={`Выбрать экран ${s.code}`} onClick={(e) => e.stopPropagation()} /></td>
+                    <td><b className="mono">{s.code}</b></td>
+                    <td>
+                      <span className="cell-stack">
+                        <span>{s.name}</span>
+                        <span className="sub">{s.city_name ?? '—'}{s.side ? ` · сторона ${s.side}` : ''}</span>
+                      </span>
+                    </td>
+                    <td className="num">{s.loop_duration_sec} сек</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <select value={sel[s.id] ?? form.duration_sec} disabled={!on}
+                        aria-label={`Длительность ролика на экране ${s.code}`}
+                        onChange={(e) => setSel((prev) => ({ ...prev, [s.id]: Number(e.target.value) }))}>
+                        {[5, 10, 15, 20, 30].map((v) => <option key={v} value={v}>{v} сек</option>)}
+                      </select>
+                    </td>
+                    <td className="num">{on ? (q1 ? fmtMoney(q1.price) : '…') : <span className="muted">—</span>}</td>
+                    <td>
+                      {!on ? <span className="muted">—</span>
+                        : !q1 ? <span className="muted">проверяем…</span>
+                        : q1.ok ? <span className="cap ok"><Icon name="check" size={13} /> помещается</span>
+                        : <span className="cap bad" title={q1.reason}><Icon name="alert" size={13} /> не помещается</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {blocked && (
+        <Alert tone="error">
+          Петля переполнена на {conflicts.length} {plural(conflicts.length, ['экране', 'экранах', 'экранах'])}:{' '}
+          {conflicts.map((c: any) => c.code).join(', ')}. Снимите их, уменьшите длительность или сохраните как черновик.
+        </Alert>
+      )}
+      {!blocked && quote && selIds.length > 0 && (
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <dl className="kv">
+            <dt>Экранов в кампании</dt><dd>{selIds.length}</dd>
+            <dt>Период</dt><dd>{fmtDate(form.date_from)} — {fmtDate(form.date_to)} ({quote.items[0]?.days ?? 0} дн.)</dd>
+            <dt>Стоимость размещения</dt><dd><b>{fmtMoney(total)}</b></dd>
+          </dl>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -219,6 +219,34 @@ api.post('/calc/price', (req, res) => {
   res.json(r);
 });
 
+// Пакетная проверка ёмкости + расчёт цены по списку экранов (для подбора экранов клиенту)
+api.post('/capacity/quote', (req, res) => {
+  expireReservations();
+  const t = tenantOf(req);
+  const { date_from, date_to, plays_per_day, time_slot_id, discount_percent, screens } = req.body ?? {};
+  if (!date_from || !date_to) return res.status(400).json({ error: 'Укажите период трансляции' });
+  if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
+  if (!Array.isArray(screens)) return res.status(400).json({ error: 'Не передан список экранов' });
+
+  const items = screens.map((s: any) => {
+    const screenId = Number(s.screen_id);
+    const duration = Number(s.duration_sec);
+    const scr = db.prepare('SELECT id, code FROM screens WHERE id = ? AND tenant_id = ?').get(screenId, t) as any;
+    if (!scr) return { screen_id: screenId, ok: false, reason: 'Экран не найден' };
+    if (!duration) return { screen_id: screenId, ok: false, reason: 'Не задана длительность ролика' };
+    const check = checkCapacity(screenId, date_from, date_to, duration);
+    const calc = calcPrice({
+      screen_id: screenId, duration_sec: duration, plays_per_day: Number(plays_per_day ?? 0),
+      date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: Number(discount_percent) || 0,
+    });
+    return {
+      screen_id: screenId, code: scr.code, ok: check.ok, reason: check.reason ?? null,
+      load: check.load ?? null, price: calc?.total ?? 0, days: calc?.days ?? 0,
+    };
+  });
+  res.json({ items, total: items.reduce((a, i: any) => a + (i.ok ? i.price ?? 0 : 0), 0) });
+});
+
 // ---------- Кампании ----------
 api.get('/campaigns', (req, res) => {
   expireReservations();
@@ -269,6 +297,73 @@ api.post('/campaigns', (req, res) => {
     VALUES (?,?,?,?,?,?,?,?)
   `).run(t, number, client_id ?? null, manager_id ?? null, discount_id ?? null, discount_percent ?? 0, production_cost ?? 0, comment ?? null);
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(info.lastInsertRowid));
+});
+
+// Кампания сразу на несколько экранов: клиент + менеджер + скидка + слоты одним действием
+api.post('/campaigns/bulk', (req, res) => {
+  expireReservations();
+  const t = tenantOf(req);
+  const {
+    client_id, manager_id, discount_id, discount_percent, production_cost, comment,
+    date_from, date_to, plays_per_day, time_slot_id, status, screens,
+  } = req.body ?? {};
+
+  if (!client_id) return res.status(400).json({ error: 'Выберите клиента' });
+  if (!Array.isArray(screens) || screens.length === 0) return res.status(400).json({ error: 'Выберите хотя бы один экран' });
+  if (!date_from || !date_to) return res.status(400).json({ error: 'Укажите период трансляции' });
+  if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
+
+  const target = status === 'draft' ? 'draft' : 'reserved';
+  const pct = Number(discount_percent) || 0;
+
+  const items = screens.map((s: any) => ({ screen_id: Number(s.screen_id), duration_sec: Number(s.duration_sec) }));
+  for (const it of items) {
+    const scr = db.prepare('SELECT id, code FROM screens WHERE id = ? AND tenant_id = ?').get(it.screen_id, t) as any;
+    if (!scr) return res.status(404).json({ error: 'Экран не найден' });
+    if (!it.duration_sec) return res.status(400).json({ error: `Экран ${scr.code}: не задана длительность ролика` });
+    // Черновик ёмкость не удерживает — проверяем только при брони.
+    if (target === 'reserved') {
+      const check = checkCapacity(it.screen_id, date_from, date_to, it.duration_sec);
+      if (!check.ok) return res.status(409).json({ error: `Экран ${scr.code}: ${check.reason}` });
+    }
+  }
+
+  const create = db.transaction(() => {
+    const year = new Date().getFullYear();
+    const last = db.prepare(`SELECT COUNT(*) c FROM campaigns WHERE tenant_id = ? AND number LIKE ?`).get(t, `${year}-%`) as any;
+    const number = `${year}-${String(last.c + 1).padStart(3, '0')}`;
+
+    let reserveUntil: string | null = null;
+    if (target === 'reserved') {
+      const cs = db.prepare('SELECT reserve_days FROM company_settings WHERE tenant_id = ?').get(t) as any;
+      reserveUntil = new Date(Date.now() + (cs?.reserve_days ?? 3) * 86400000).toISOString().slice(0, 10);
+    }
+
+    const campId = db.prepare(`
+      INSERT INTO campaigns (tenant_id, number, client_id, manager_id, discount_id, discount_percent, production_cost, comment, status, reserve_until)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(t, number, client_id, manager_id ?? null, discount_id ?? null, pct,
+      production_cost ?? 0, comment ?? null, target, reserveUntil).lastInsertRowid as number;
+
+    const insertSlot = db.prepare(`
+      INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, price)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `);
+    let total = 0;
+    for (const it of items) {
+      const calc = calcPrice({
+        screen_id: it.screen_id, duration_sec: it.duration_sec, plays_per_day: Number(plays_per_day ?? 0),
+        date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: pct,
+      });
+      const price = calc?.total ?? 0;
+      total += price;
+      insertSlot.run(t, campId, it.screen_id, it.duration_sec, date_from, date_to,
+        plays_per_day ?? 0, time_slot_id ?? null, price);
+    }
+    return { campaign_id: campId, number, status: target, reserve_until: reserveUntil, slots: items.length, total };
+  });
+
+  res.json(create());
 });
 
 api.put('/campaigns/:id', (req, res) => {
