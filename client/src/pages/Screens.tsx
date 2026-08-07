@@ -31,7 +31,7 @@ const FILTER_FIELDS = [
   { key: 'owner_name', label: 'Владелец', type: 'text' },
   { key: 'status', label: 'Статус', type: 'select', options: ['active', 'maintenance', 'inactive'] },
   { key: 'tags', label: 'Теги', type: 'text' },
-  { key: 'load_pct', label: 'Загрузка петли, %', type: 'number' },
+  { key: 'load_pct', label: 'Загрузка блока, %', type: 'number' },
   { key: 'brightness', label: 'Яркость, нит', type: 'number' },
 ];
 
@@ -124,7 +124,7 @@ export default function Screens() {
     ) },
     { key: 'side', title: 'Сторона', render: (s) => s.side || '—' },
     { key: 'city_name', title: 'Город' },
-    { key: 'load', title: 'Загрузка петли', sortValue: (s) => s.load?.max_load_pct ?? 0,
+    { key: 'load', title: 'Загрузка блока', sortValue: (s) => s.load?.max_load_pct ?? 0,
       render: (s) => s.load
         ? <LoadBar pct={s.load.max_load_pct} loop={s.load.loop} />
         : <span className="muted">—</span> },
@@ -138,7 +138,7 @@ export default function Screens() {
     { key: 'brightness', title: 'Яркость, нит', optional: true },
     { key: 'type_name', title: 'Тип', optional: true },
     { key: 'orientation', title: 'Ориентация', optional: true, render: (s) => s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная' },
-    { key: 'loop', title: 'Петля, сек', optional: true, sortValue: (s) => s.loop_duration_sec, render: (s) => <span className="num">{s.loop_duration_sec}</span> },
+    { key: 'loop', title: 'Блок, сек', optional: true, sortValue: (s) => s.loop_duration_sec, render: (s) => <span className="num">{s.loop_duration_sec}</span> },
     { key: 'work', title: 'Часы работы', optional: true, render: (s) => <span className="mono">{s.work_from}–{s.work_to}</span> },
     { key: 'price', title: 'Цена ₽/сек за 30 дн.', optional: true, sortValue: (s) => s.price_per_sec_month,
       render: (s) => (
@@ -201,8 +201,8 @@ export default function Screens() {
       </div>
 
       <div className="page-sub">
-        Кликните название экрана — откроется занятость по месяцам и загрузка петли.
-        Показатель «Загрузка петли» — пиковый день выбранного периода.
+        Кликните название экрана — откроется занятость по месяцам и загрузка блока.
+        Показатель «Загрузка блока» — пиковый день выбранного периода.
         {selectedIds.length > 0
           ? ` Отмечено ${selectedIds.length} — в Excel уйдут только они.`
           : ' Отметьте строки галочками, чтобы выгрузить только их, иначе выгрузится вся выборка.'}
@@ -214,7 +214,7 @@ export default function Screens() {
         <div className="scard"><div className="l">Экранов в выборке</div><div className="v">{filtered.length} <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>из {rows.length}</span></div></div>
         <div className="scard"><div className="l">Средняя загрузка</div><div className="v">{summary.avg}%</div></div>
         <div className="scard"><div className="l">Свободно секунд</div><div className="v">{summary.freeSec}</div></div>
-        <div className="scard"><div className="l">Петля заполнена</div><div className="v">{summary.full}</div></div>
+        <div className="scard"><div className="l">Блок заполнен</div><div className="v">{summary.full}</div></div>
       </div>
 
       {conds.length > 0 && (
@@ -408,7 +408,7 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
           <TextInput label="Разрешение: высота, px" type="number" value={s.res_h} onChange={set('res_h')} />
           <TextInput label="Шаг пикселя" value={s.pixel_pitch} onChange={set('pixel_pitch')} placeholder="P6.6" />
           <TextInput label="Яркость, нит" type="number" value={s.brightness} onChange={set('brightness')} />
-          <TextInput label="Длина петли, сек" type="number" value={s.loop_duration_sec} onChange={set('loop_duration_sec')}
+          <TextInput label="Длина блока, сек" type="number" value={s.loop_duration_sec} onChange={set('loop_duration_sec')}
             hint="Сколько секунд рекламы вмещает один оборот ротации" />
           <TextInput label="Работает с" value={s.work_from} onChange={set('work_from')} placeholder="06:00" />
           <TextInput label="Работает до" value={s.work_to} onChange={set('work_to')} placeholder="24:00" />
@@ -473,7 +473,7 @@ const EXPORT_COLUMNS: { key: string; label: string; always?: boolean }[] = [
   { key: 'pitch', label: 'Шаг пикселя' },
   { key: 'brightness', label: 'Яркость' },
   { key: 'orientation', label: 'Ориентация' },
-  { key: 'loop', label: 'Длина петли' },
+  { key: 'loop', label: 'Длина блока' },
   { key: 'work', label: 'Часы работы' },
   { key: 'price', label: 'Ставка ₽/сек за 30 дн.' },
   { key: 'price10', label: 'Ролик 10 сек / 30 дн.' },
@@ -553,7 +553,7 @@ function ExportModal(props: { screens: Screen[]; onClose: () => void }) {
       </div>
 
       <div className="export-section">
-        <span className="eyebrow">Месяцы — загрузка петли</span>
+        <span className="eyebrow">Месяцы — загрузка блока</span>
         <div className="tabs" style={{ marginBottom: 'var(--sp-3)' }}>
           {years.map((y) => (
             <button key={y} className={`tab ${year === y ? 'active' : ''}`} onClick={() => setYear(y)}>{y}</button>
@@ -573,7 +573,7 @@ function ExportModal(props: { screens: Screen[]; onClose: () => void }) {
         <span className="hint">
           {months.length === 0
             ? 'Месяцы не выбраны — файл будет без колонок занятости.'
-            : `Выбрано ${months.length}: по каждому месяцу колонка с пиковой загрузкой петли и свободными секундами.`}
+            : `Выбрано ${months.length}: по каждому месяцу колонка с пиковой загрузкой блока и свободными секундами.`}
         </span>
       </div>
     </Modal>
@@ -775,7 +775,7 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
 
   const loop = data?.loop_duration_sec ?? 0;
 
-  // Загрузка петли за выбранный месяц: пиковый день, сегменты по клиентам
+  // Загрузка блока за выбранный месяц: пиковый день, сегменты по клиентам
   const monthLoad = useMemo(() => {
     if (!data) return null;
     const daysInMonth = new Date(year, selMonth, 0).getDate();
@@ -810,7 +810,7 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
   return (
     <Modal
       title={`Занятость экрана ${props.screen.code}`}
-      subtitle={`${props.screen.name} · петля ${props.screen.loop_duration_sec} сек`}
+      subtitle={`${props.screen.name} · блок ${props.screen.loop_duration_sec} сек`}
       wide onClose={props.onClose}
     >
       {error && <Alert tone="error">{error}</Alert>}
@@ -890,7 +890,7 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
         <div style={{ marginTop: 20 }}>
           <div className="tape-readout">
             <div>
-              <span className="eyebrow">Загрузка петли — {MONTHS_FULL[selMonth - 1]} {year}</span>
+              <span className="eyebrow">Загрузка блока — {MONTHS_FULL[selMonth - 1]} {year}</span>
               <div className={`big is-${tone}`}>{monthLoad.pct}%</div>
             </div>
             <div className="side">
@@ -984,7 +984,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
 
   const blocked = capacity && !capacity.ok;
   return (
-    <Modal title="Добавить клиента на экран" subtitle={`${props.screen.code} · петля ${props.screen.loop_duration_sec} сек`}
+    <Modal title="Добавить клиента на экран" subtitle={`${props.screen.code} · блок ${props.screen.loop_duration_sec} сек`}
       onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
@@ -1010,7 +1010,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
         <div style={{ marginTop: 16 }}>
           {capacity.ok ? (
             <Alert tone="ok">
-              Ролик помещается: загрузка петли за период дойдёт до {capacity.load.max_load_pct}%,
+              Ролик помещается: загрузка блока за период дойдёт до {capacity.load.max_load_pct}%,
               свободно {capacity.load.free_sec} из {capacity.load.loop_duration_sec} сек.
             </Alert>
           ) : (
@@ -1169,7 +1169,7 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
           options={dicts.timeSlots.map((t: any) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
         <SelectInput label="Статус кампании" value={form.status} allowEmpty={false}
           onChange={(v) => setForm({ ...form, status: v })}
-          hint={form.status === 'draft' ? 'Черновик не удерживает ёмкость петли' : 'Бронь удержит ёмкость петли'}
+          hint={form.status === 'draft' ? 'Черновик не удерживает ёмкость блока' : 'Бронь удержит ёмкость блока'}
           options={[{ value: 'reserved', label: 'Бронь' }, { value: 'draft', label: 'Черновик' }]} />
       </div>
 
@@ -1195,7 +1195,7 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
                 <th scope="col"><span className="th-btn" /></th>
                 <th scope="col"><span className="th-btn">Код</span></th>
                 <th scope="col"><span className="th-btn">Экран</span></th>
-                <th scope="col"><span className="th-btn">Петля</span></th>
+                <th scope="col"><span className="th-btn">Блок</span></th>
                 <th scope="col"><span className="th-btn">Ролик</span></th>
                 <th scope="col"><span className="th-btn">Стоимость</span></th>
                 <th scope="col"><span className="th-btn">Ёмкость</span></th>
@@ -1246,7 +1246,7 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
 
       {blocked && (
         <Alert tone="error">
-          Петля переполнена на {conflicts.length} {plural(conflicts.length, ['экране', 'экранах', 'экранах'])}:{' '}
+          Блок переполнен на {conflicts.length} {plural(conflicts.length, ['экране', 'экранах', 'экранах'])}:{' '}
           {conflicts.map((c: any) => c.code).join(', ')}. Снимите их, уменьшите длительность или сохраните как черновик.
         </Alert>
       )}
@@ -1286,10 +1286,10 @@ function PlaylistModal(props: { screen: Screen; onClose: () => void }) {
   }));
 
   return (
-    <Modal title={`Плейлист ${props.screen.code}`} subtitle={`${props.screen.name} · петля ${loop} сек`} wide onClose={props.onClose}>
+    <Modal title={`Плейлист ${props.screen.code}`} subtitle={`${props.screen.name} · блок ${loop} сек`} wide onClose={props.onClose}>
       <div className="panel">
         <h3>
-          Загрузка петли по дням
+          Загрузка блока по дням
           <span className="field-inline" style={{ marginLeft: 'auto', fontWeight: 400 }}>
             <input type="date" aria-label="Начало периода" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
             <span aria-hidden="true">—</span>
@@ -1349,7 +1349,7 @@ function PlaylistModal(props: { screen: Screen; onClose: () => void }) {
               {playlist.length === 0 && (
                 <tr><td className="empty-row" colSpan={9}>
                   <span className="empty-state">
-                    <b>Петля свободна</b>
+                    <b>Блок свободен</b>
                     <span>На {fmtDate(date)} размещений нет — все {loop} секунд можно продать.</span>
                   </span>
                 </td></tr>

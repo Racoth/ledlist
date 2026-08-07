@@ -1,11 +1,11 @@
 import { db } from './db.js';
 
 /**
- * Движок проверки ёмкости петли.
- * Модель: петля экрана длиной loop_duration_sec крутится непрерывно в часы работы.
- * Каждый активный (бронь/продано) слот занимает duration_sec секунд петли
+ * Движок проверки ёмкости блока.
+ * Модель: блок экрана длиной loop_duration_sec крутится непрерывно в часы работы.
+ * Каждый активный (бронь/продано) слот занимает duration_sec секунд блока
  * в каждый день своего периода. Ёмкость: сумма длительностей активных роликов
- * в любой день не должна превышать длину петли.
+ * в любой день не должна превышать длину блока.
  */
 
 export interface DayLoad {
@@ -76,7 +76,7 @@ export function loopLoad(screenId: number, from: string, to: string, excludeCamp
   };
 }
 
-/** Проверка: помещается ли ролик длительностью durationSec в петлю на всём периоде. */
+/** Проверка: помещается ли ролик длительностью durationSec в блок на всём периоде. */
 export function checkCapacity(screenId: number, from: string, to: string, durationSec: number, excludeCampaignId?: number) {
   const load = loopLoad(screenId, from, to, excludeCampaignId);
   if (!load) return { ok: false, reason: 'Экран не найден' };
@@ -84,7 +84,7 @@ export function checkCapacity(screenId: number, from: string, to: string, durati
   if (overflowDays.length > 0) {
     return {
       ok: false,
-      reason: `Петля переполнена: не хватает места в ${overflowDays.length} дн. (свободно ${load.free_sec} сек, требуется ${durationSec} сек)`,
+      reason: `Блок переполнен: не хватает места в ${overflowDays.length} дн. (свободно ${load.free_sec} сек, требуется ${durationSec} сек)`,
       load,
       overflow_days: overflowDays.map((d) => d.date),
     };
@@ -95,7 +95,7 @@ export function checkCapacity(screenId: number, from: string, to: string, durati
 /**
  * Агрегатная проверка кампании перед бронью/продажей:
  * по каждому экрану и каждому дню сумма длительностей ВСЕХ роликов кампании
- * плюс ролики других активных кампаний не должна превышать длину петли.
+ * плюс ролики других активных кампаний не должна превышать длину блока.
  * (Проверка слотов по одному пропустила бы переполнение собственными роликами.)
  */
 export function checkCampaignCapacity(campaignId: number): { ok: boolean; reason?: string } {
@@ -117,7 +117,7 @@ export function checkCampaignCapacity(campaignId: number): { ok: boolean; reason
         const scr = db.prepare('SELECT code FROM screens WHERE id = ?').get(screenId) as any;
         return {
           ok: false,
-          reason: `Экран ${scr?.code}: петля переполнена ${day.date.split('-').reverse().join('.')} — занято ${day.used_sec} сек другими кампаниями + ${ownUsed} сек роликов кампании при петле ${load.loop_duration_sec} сек`,
+          reason: `Экран ${scr?.code}: блок переполнен ${day.date.split('-').reverse().join('.')} — занято ${day.used_sec} сек другими кампаниями + ${ownUsed} сек роликов кампании при блоке ${load.loop_duration_sec} сек`,
         };
       }
     }
@@ -133,12 +133,12 @@ export function checkCampaignCapacity(campaignId: number): { ok: boolean; reason
  * база = ставка_за_секунду_в_месяц × длительность_ролика × (дней / 30)
  * итог = база × коэф_тайм-слота × (1 − скидка%) ; налог считается сверху, если режим с НДС.
  *
- * Количество выходов в сутки на цену не влияет: оно определяется петлёй —
- * ролик показывается один раз за оборот, то есть часы_работы / длина_петли.
+ * Количество выходов в сутки на цену не влияет: оно определяется блоком —
+ * ролик показывается один раз за оборот, то есть часы_работы / длина_блока.
  */
 export const PRICE_PERIOD_DAYS = 30;
 
-/** Сколько раз ролик выйдет за сутки: один показ на оборот петли в часы работы. */
+/** Сколько раз ролик выйдет за сутки: один показ на оборот блока в часы работы. */
 export function naturalPlaysPerDay(workFrom: string, workTo: string, loopSec: number): number {
   if (!loopSec) return 0;
   const toSec = (t: string) => {

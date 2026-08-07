@@ -35,7 +35,7 @@ export default function Bookings() {
     <div className="page">
       <div className="page-head"><h1>Брони</h1></div>
       <div className="page-sub">
-        Бронь удерживает секунды петли до указанной даты. Когда срок проходит, бронь снимается автоматически
+        Бронь удерживает секунды блока до указанной даты. Когда срок проходит, бронь снимается автоматически
         и ёмкость возвращается в продажу.
       </div>
       <DataTable caption="Активные брони" columns={columns} rows={rows} onRowClick={(c) => nav(`/campaigns/${c.id}`)}

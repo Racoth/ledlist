@@ -86,7 +86,7 @@ function TopBar() {
             label="Продажи"
             links={[
               { to: '/campaigns', label: 'Заказы и кампании', sub: 'Все размещения по клиентам' },
-              { to: '/bookings', label: 'Брони', sub: 'Резервы, удерживающие петлю' },
+              { to: '/bookings', label: 'Брони', sub: 'Резервы, удерживающие блок' },
               { to: '/payments', label: 'Платежи', sub: 'Реестр поступлений' },
             ]}
           />

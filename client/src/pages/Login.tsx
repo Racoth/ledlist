@@ -9,7 +9,7 @@ const DEMO = [
   { who: 'Суперадмин', email: 'admin@platform.ru', password: 'admin' },
 ];
 
-// Витрина петли на экране входа: 60 секунд эфира, три рекламодателя в ротации.
+// Витрина блока на экране входа: 60 секунд эфира, три рекламодателя в ротации.
 const SHOWCASE = [
   { label: 'Лидер-Авто', sec: 15, color: '#3987e5' },
   { label: 'Беркат', sec: 10, color: '#d95926' },
@@ -44,14 +44,14 @@ export default function Login() {
         <Brand as="plain" />
 
         <div className="login-lede">
-          <h2>Петля <span className="lit">на 60 секунд</span>. Продайте каждую.</h2>
+          <h2>Блок <span className="lit">на 60 секунд</span>. Продайте каждую.</h2>
           <p>
             Инвентарь LED-экранов, ёмкость ротации и продажи слотов — в одном рабочем месте.
           </p>
 
           <div className="login-loop">
             <div className="cap">
-              <span>Экран GRZLED04001 · петля 60 сек</span>
+              <span>Экран GRZLED04001 · блок 60 сек</span>
               <span>занято {used} · свободно {60 - used}</span>
             </div>
             <LoopTape loop={60} segments={SHOWCASE} />

@@ -80,7 +80,7 @@ api.get('/screens', (req, res) => {
     WHERE s.tenant_id = ? ORDER BY s.code
   `).all(t) as any[];
 
-  // загрузка петли на период (по умолчанию — ближайшие 30 дней)
+  // загрузка блока на период (по умолчанию — ближайшие 30 дней)
   const from = String(req.query.from ?? new Date().toISOString().slice(0, 10));
   const toDefault = new Date(Date.now() + 29 * 86400000).toISOString().slice(0, 10);
   const to = String(req.query.to ?? toDefault);
@@ -120,7 +120,7 @@ api.delete('/screens/:id', requireRole('admin', 'superadmin'), (req, res) => {
   res.json({ ok: true });
 });
 
-// Загрузка петли экрана по датам + текущий плейлист
+// Загрузка блока экрана по датам + текущий плейлист
 api.get('/screens/:id/availability', (req, res) => {
   expireReservations();
   const from = String(req.query.from ?? new Date().toISOString().slice(0, 10));
@@ -130,7 +130,7 @@ api.get('/screens/:id/availability', (req, res) => {
   res.json(load);
 });
 
-// Расписание занятости за год: строки-клиенты с полосами по месяцам + пиковая загрузка петли по клиентам
+// Расписание занятости за год: строки-клиенты с полосами по месяцам + пиковая загрузка блока по клиентам
 api.get('/screens/:id/schedule', (req, res) => {
   expireReservations();
   const id = Number(req.params.id);
@@ -153,7 +153,7 @@ api.get('/screens/:id/schedule', (req, res) => {
     ORDER BY cl.name, s.date_from
   `).all(id, yTo, yFrom) as any[];
 
-  // Загрузка петли по месяцам считается на клиенте из слотов.
+  // Загрузка блока по месяцам считается на клиенте из слотов.
   res.json({ loop_duration_sec: screen.loop_duration_sec, year, slots });
 });
 
@@ -394,7 +394,7 @@ api.post('/campaigns/:id/status', (req, res) => {
     return res.status(400).json({ error: `Переход ${c.status} → ${target} недопустим` });
   }
 
-  // При активации (бронь/продажа) — агрегатная проверка ёмкости петли по всем слотам кампании.
+  // При активации (бронь/продажа) — агрегатная проверка ёмкости блока по всем слотам кампании.
   if ((target === 'reserved' || target === 'sold') && (c.status === 'draft' || c.status === 'cancelled')) {
     const slotsCount = db.prepare('SELECT COUNT(*) c FROM ad_slots WHERE campaign_id = ?').get(c.id) as any;
     if (slotsCount.c === 0) return res.status(400).json({ error: 'В кампании нет слотов размещения' });
@@ -430,7 +430,7 @@ api.post('/campaigns/:id/slots', (req, res) => {
   if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
 
   // Для активных кампаний проверяем ёмкость сразу; для черновика — предупреждаем, но не блокируем.
-  // Собственные слоты кампании не исключаем: если кампания активна, они реально занимают петлю.
+  // Собственные слоты кампании не исключаем: если кампания активна, они реально занимают блок.
   const check = checkCapacity(Number(screen_id), date_from, date_to, Number(duration_sec));
   if (!check.ok && (c.status === 'reserved' || c.status === 'sold')) {
     return res.status(409).json({ error: check.reason });
@@ -522,7 +522,7 @@ const EXPORT_COLUMNS: Record<string, { title: string; width: number; value: (s: 
   pitch:       { title: 'Шаг пикселя', width: 12, value: (s) => s.pixel_pitch ?? '' },
   brightness:  { title: 'Яркость, нит', width: 13, value: (s) => s.brightness ?? '' },
   orientation: { title: 'Ориентация', width: 14, value: (s) => (s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная') },
-  loop:        { title: 'Петля, сек', width: 11, value: (s) => s.loop_duration_sec },
+  loop:        { title: 'Блок, сек', width: 11, value: (s) => s.loop_duration_sec },
   work:        { title: 'Часы работы', width: 14, value: (s) => `${s.work_from}–${s.work_to}` },
   price:       { title: 'Ставка ₽/сек за 30 дн.', width: 21, value: (s) => s.price_per_sec_month },
   price10:     { title: 'Ролик 10 сек / 30 дн., ₽', width: 22, value: (s) => s.price_per_sec_month * 10 },
@@ -607,7 +607,7 @@ api.post('/screens/export', async (req, res) => {
         : '';
     }
 
-    // Загрузка петли по выбранным месяцам: пиковый день месяца
+    // Загрузка блока по выбранным месяцам: пиковый день месяца
     for (const m of monthList) {
       const from = `${m.year}-${String(m.month).padStart(2, '0')}-01`;
       const last = new Date(m.year, m.month, 0).getDate();

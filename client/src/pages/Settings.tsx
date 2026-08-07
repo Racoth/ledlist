@@ -69,7 +69,7 @@ function CompanyTab() {
         <TextInput label="Email" value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
         <TextInput label="Срок брони по умолчанию, дней" type="number" value={form.reserve_days}
           onChange={(v) => setForm({ ...form, reserve_days: v })}
-          hint="Сколько дней кампания в статусе «Бронь» удерживает ёмкость петли" />
+          hint="Сколько дней кампания в статусе «Бронь» удерживает ёмкость блока" />
       </div>
       <div style={{ marginTop: 14 }}><button className="btn" onClick={save}>Сохранить</button></div>
     </div>

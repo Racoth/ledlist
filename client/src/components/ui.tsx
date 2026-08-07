@@ -43,7 +43,7 @@ export function onColor(hex: string) {
   return (1.05 / (lum + 0.05)) >= ((lum + 0.05) / 0.0946) ? '#ffffff' : '#12161d';
 }
 
-/** Тон загрузки петли: <70 — свободно, <95 — плотно, ≥95 — заполнено. */
+/** Тон загрузки блока: <70 — свободно, <95 — плотно, ≥95 — заполнено. */
 export function loadTone(pct: number): 'good' | 'warn' | 'crit' {
   return pct >= 95 ? 'crit' : pct >= 70 ? 'warn' : 'good';
 }
@@ -206,7 +206,7 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 /* ============================================================================
-   Метр загрузки петли — миниатюра светодиодной ленты
+   Метр загрузки блока — миниатюра светодиодной ленты
    ========================================================================== */
 const TRACK_PX = 84;   // ширина дорожки метра в инвентаре
 const MIN_TICK_PX = 4; // ниже этого деления сливаются в сплошную заливку
@@ -223,7 +223,7 @@ export function LoadBar({ pct, loop }: { pct: number; loop?: number }) {
         className="track"
         style={{ '--tick': `${tick}px` } as React.CSSProperties}
         role="img"
-        aria-label={`Загрузка петли ${pct}%`}
+        aria-label={`Загрузка блока ${pct}%`}
       >
         <span className="fill" style={{ width: `${width}%`, background: TONE_COLOR[tone] }} />
       </span>
@@ -233,7 +233,7 @@ export function LoadBar({ pct, loop }: { pct: number; loop?: number }) {
 }
 
 /* ============================================================================
-   СИГНАТУРА — секундная лента петли.
+   СИГНАТУРА — секундная лента блока.
    Одно деление = одна секунда эфира. Занятые секунды светятся цветом клиента,
    свободные остаются погашенными.
    ========================================================================== */
@@ -278,7 +278,7 @@ export function LoopRuler({ loop }: { loop: number }) {
 
 export function TapeLegend({ segments, free, loop }: { segments: TapeSegment[]; free: number; loop: number }) {
   if (segments.length === 0) {
-    return <div className="tape-empty">Петля свободна — размещений в этом месяце нет. Все {loop} секунд можно продать.</div>;
+    return <div className="tape-empty">Блок свободен — размещений в этом месяце нет. Все {loop} секунд можно продать.</div>;
   }
   return (
     <div className="tape-legend">

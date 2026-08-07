@@ -27,9 +27,9 @@ export default function CampaignCard() {
     try {
       await post(`/campaigns/${id}/status`, { status });
       setOk(
-        status === 'reserved' ? 'Слоты забронированы — ёмкость петли удержана.'
+        status === 'reserved' ? 'Слоты забронированы — ёмкость блока удержана.'
         : status === 'sold' ? 'Кампания продана.'
-        : status === 'cancelled' ? 'Кампания отменена, петля освобождена.'
+        : status === 'cancelled' ? 'Кампания отменена, блок освобождён.'
         : 'Кампания возвращена в черновик.');
       load();
     } catch (e: any) { setError(e.message); }
@@ -38,7 +38,7 @@ export default function CampaignCard() {
   const transitions: Record<string, { to: string; label: string; cls?: string }[]> = {
     draft: [{ to: 'reserved', label: 'Забронировать слоты' }, { to: 'cancelled', label: 'Отменить', cls: 'secondary' }],
     reserved: [{ to: 'sold', label: 'Отметить проданной' }, { to: 'draft', label: 'Вернуть в черновик', cls: 'secondary' }, { to: 'cancelled', label: 'Отменить', cls: 'danger' }],
-    sold: [{ to: 'cancelled', label: 'Отменить и освободить петлю', cls: 'danger' }],
+    sold: [{ to: 'cancelled', label: 'Отменить и освободить блок', cls: 'danger' }],
     cancelled: [{ to: 'draft', label: 'Возобновить как черновик', cls: 'secondary' }],
   };
 
@@ -112,7 +112,7 @@ export default function CampaignCard() {
                   <tr><td className="empty-row" colSpan={8}>
                     <span className="empty-state">
                       <b>Слотов пока нет</b>
-                      <span>Добавьте размещение на экране — калькулятор посчитает стоимость, а проверка покажет, влезает ли ролик в петлю.</span>
+                      <span>Добавьте размещение на экране — калькулятор посчитает стоимость, а проверка покажет, влезает ли ролик в блок.</span>
                     </span>
                   </td></tr>
                 )}
@@ -217,7 +217,7 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
     : null;
 
   return (
-    <Modal title="Слот размещения в петле" subtitle={`Кампания ${props.campaign.number}`} wide onClose={props.onClose}
+    <Modal title="Слот размещения в блоке" subtitle={`Кампания ${props.campaign.number}`} wide onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
         <button className="btn" onClick={add} disabled={!form.screen_id || !!capBlocked}>
@@ -243,7 +243,7 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
 
       {capacity && (
         <div className="panel" style={{ marginTop: 16, marginBottom: 0 }}>
-          <h3>Ёмкость петли</h3>
+          <h3>Ёмкость блока</h3>
           {capacity.ok
             ? <Alert tone="ok">Ролик помещается: до {cap.max_load_pct}% загрузки, свободно {cap.free_sec} из {cap.loop_duration_sec} сек.</Alert>
             : <Alert tone="error">{capacity.reason}</Alert>}
@@ -267,7 +267,7 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
             {calc.discount_percent > 0 && <><dt>Скидка {calc.discount_percent}%</dt><dd>−{fmtMoney(calc.discount_amount)}</dd></>}
             {calc.tax_rate > 0 && <><dt>Налог ({calc.tax_name})</dt><dd>+{fmtMoney(calc.tax)}</dd></>}
             <dt><b>Итого за слот</b></dt><dd><b>{fmtMoney(calc.total)}</b></dd>
-            <dt>Выходов в сутки</dt><dd>≈ {calc.plays_per_day} <span className="muted">(один показ за оборот петли)</span></dd>
+            <dt>Выходов в сутки</dt><dd>≈ {calc.plays_per_day} <span className="muted">(один показ за оборот блока)</span></dd>
           </dl>
         </div>
       )}
@@ -323,7 +323,7 @@ function CreativesTab({ campaign, reload }: { campaign: any; reload: () => void 
               <tr><td className="empty-row" colSpan={7}>
                 <span className="empty-state">
                   <b>Роликов нет</b>
-                  <span>Загрузите креатив — его длительность подскажет, сколько секунд петли занять.</span>
+                  <span>Загрузите креатив — его длительность подскажет, сколько секунд блока занять.</span>
                 </span>
               </td></tr>
             )}
