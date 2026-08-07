@@ -845,6 +845,14 @@ input[type='date']:focus, select.plain:focus {
   line-height: 1.2;
   word-break: break-word;
 }
+/* Пояснение к числу: из чего оно складывается */
+.scard-sub {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
 .scard.is-money .v { font-family: var(--mono); font-size: 16px; letter-spacing: -.04em; }
 .scard .v.paid-full { color: var(--good-ink); }
 .scard .v.paid-part { color: var(--warn-ink); }

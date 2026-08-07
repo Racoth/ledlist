@@ -102,10 +102,17 @@ export default function Screens() {
   const summary = useMemo(() => {
     const withLoad = filtered.filter((s) => s.load);
     const freeSec = withLoad.reduce((a, s) => a + (s.load!.free_sec ?? 0), 0);
+    const totalSec = withLoad.reduce((a, s) => a + (s.load!.loop ?? 0), 0);
     const avg = withLoad.length
       ? Math.round(withLoad.reduce((a, s) => a + s.load!.max_load_pct, 0) / withLoad.length)
       : 0;
-    return { freeSec, avg, full: withLoad.filter((s) => s.load!.max_load_pct >= 95).length };
+    return {
+      freeSec, totalSec, avg,
+      counted: withLoad.length,
+      // сколько секунд из общей ёмкости уже продано
+      usedPct: totalSec ? Math.round(((totalSec - freeSec) / totalSec) * 100) : 0,
+      full: withLoad.filter((s) => s.load!.max_load_pct >= 95).length,
+    };
   }, [filtered]);
 
   const columns: Column<Screen>[] = [
@@ -212,9 +219,18 @@ export default function Screens() {
 
       <div className="summary-cards">
         <div className="scard"><div className="l">Экранов в выборке</div><div className="v">{filtered.length} <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>из {rows.length}</span></div></div>
-        <div className="scard"><div className="l">Средняя загрузка</div><div className="v">{summary.avg}%</div></div>
-        <div className="scard"><div className="l">Свободно секунд</div><div className="v">{summary.freeSec}</div></div>
-        <div className="scard"><div className="l">Блок заполнен</div><div className="v">{summary.full}</div></div>
+        <div className="scard" title="Продано секунд от суммарной ёмкости блоков всех экранов выборки">
+          <div className="l">Заполнено</div>
+          <div className="v">{summary.usedPct}% <span className="scard-sub">{summary.totalSec - summary.freeSec} из {summary.totalSec} сек</span></div>
+        </div>
+        <div className="scard" title="Свободные секунды в блоках экранов выборки">
+          <div className="l">Свободно секунд</div>
+          <div className="v">{summary.freeSec}</div>
+        </div>
+        <div className="scard" title="Экраны, где блок загружен на 95% и больше — продавать почти нечего">
+          <div className="l">Загружены ≥ 95%</div>
+          <div className="v">{summary.full} <span className="scard-sub">из {summary.counted} экр.</span></div>
+        </div>
       </div>
 
       {conds.length > 0 && (
