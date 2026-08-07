@@ -319,9 +319,13 @@ export function DataTable<T extends { id: number }>(props: {
   variant?: string;             // доп. класс оформления (напр. 'inventory')
   rowClass?: (row: T) => string | undefined;
   caption?: string;
+  selected?: number[];                          // включает колонку выбора
+  onSelectedChange?: (ids: number[]) => void;
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const selectable = !!props.onSelectedChange;
+  const selectedSet = new Set(props.selected ?? []);
 
   const cols = props.visibleKeys
     ? props.columns.filter((c) => !c.optional || props.visibleKeys!.includes(c.key))
@@ -345,6 +349,19 @@ export function DataTable<T extends { id: number }>(props: {
         {props.caption && <caption className="visually-hidden">{props.caption}</caption>}
         <thead>
           <tr>
+            {selectable && (
+              <th scope="col" className="sel-cell">
+                <input
+                  type="checkbox"
+                  aria-label="Выбрать все строки"
+                  checked={sorted.length > 0 && sorted.every((r) => selectedSet.has(r.id))}
+                  ref={(el) => {
+                    if (el) el.indeterminate = sorted.some((r) => selectedSet.has(r.id)) && !sorted.every((r) => selectedSet.has(r.id));
+                  }}
+                  onChange={(e) => props.onSelectedChange!(e.target.checked ? sorted.map((r) => r.id) : [])}
+                />
+              </th>
+            )}
             {cols.map((c) => {
               const sortable = c.sortable !== false && c.title !== '';
               const active = sortKey === c.key;
@@ -376,7 +393,7 @@ export function DataTable<T extends { id: number }>(props: {
         <tbody>
           {sorted.length === 0 && (
             <tr>
-              <td className="empty-row" colSpan={cols.length}>
+              <td className="empty-row" colSpan={cols.length + (selectable ? 1 : 0)}>
                 <span className="empty-state">
                   <b>{props.emptyText ?? 'Пока пусто'}</b>
                   {props.emptyHint && <span>{props.emptyHint}</span>}
@@ -387,9 +404,27 @@ export function DataTable<T extends { id: number }>(props: {
           {sorted.map((row) => (
             <tr
               key={row.id}
-              className={[props.onRowClick ? 'clickable' : '', props.rowClass?.(row) ?? ''].filter(Boolean).join(' ')}
+              className={[
+                props.onRowClick ? 'clickable' : '',
+                selectedSet.has(row.id) ? 'is-picked' : '',
+                props.rowClass?.(row) ?? '',
+              ].filter(Boolean).join(' ')}
               onClick={() => props.onRowClick?.(row)}
             >
+              {selectable && (
+                <td className="sel-cell" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Выбрать строку ${row.id}`}
+                    checked={selectedSet.has(row.id)}
+                    onChange={(e) => {
+                      const next = new Set(selectedSet);
+                      if (e.target.checked) next.add(row.id); else next.delete(row.id);
+                      props.onSelectedChange!([...next]);
+                    }}
+                  />
+                </td>
+              )}
               {cols.map((c) => <td key={c.key}>{c.render ? c.render(row) : (row as any)[c.key] ?? '—'}</td>)}
             </tr>
           ))}

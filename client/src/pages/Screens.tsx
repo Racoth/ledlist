@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, put, del, uploadFile, getToken, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
+import { get, post, put, del, uploadFile, downloadPost, getToken, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
 import {
   DataTable, Modal, TextInput, SelectInput, TextArea, StatusBadge, LoadBar, ColumnsButton,
   Column, Alert, Icon, LoopTape, LoopRuler, TapeLegend, TapeSegment, seriesColor, loadTone, onColor,
@@ -74,6 +74,8 @@ export default function Screens() {
   const [playlistScreen, setPlaylistScreen] = useState<Screen | null>(null);
   const [scheduleScreen, setScheduleScreen] = useState<Screen | null>(null);
   const [addClientOpen, setAddClientOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [exportOpen, setExportOpen] = useState(false);
   const [visibleCols, setVisibleCols] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem('screens_cols') ?? 'null') ??
     ['size', 'resolution', 'pitch', 'type_name', 'loop', 'price', 'owner_name']);
@@ -183,6 +185,10 @@ export default function Screens() {
             {conds.length > 0 && <span className="num">{conds.length}</span>}
           </button>
           <ColumnsButton columns={columns} visible={visibleCols} onChange={setVisibleCols} />
+          <button className="btn secondary" onClick={() => setExportOpen(true)} disabled={filtered.length === 0}>
+            <Icon name="upload" size={14} /> Экспорт в Excel
+            {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
+          </button>
           <button className="btn" onClick={() => setAddClientOpen(true)}>
             <Icon name="users" size={14} /> Добавить клиента
           </button>
@@ -197,6 +203,9 @@ export default function Screens() {
       <div className="page-sub">
         Кликните название экрана — откроется занятость по месяцам и загрузка петли.
         Показатель «Загрузка петли» — пиковый день выбранного периода.
+        {selectedIds.length > 0
+          ? ` Отмечено ${selectedIds.length} — в Excel уйдут только они.`
+          : ' Отметьте строки галочками, чтобы выгрузить только их, иначе выгрузится вся выборка.'}
       </div>
 
       {error && <Alert tone="error">{error}</Alert>}
@@ -234,6 +243,8 @@ export default function Screens() {
         visibleKeys={[...visibleCols, 'code', 'name', 'side', 'city_name', 'load', 'status', 'actions']}
         emptyText="Ни один экран не подходит под фильтр"
         emptyHint="Измените условия или сбросьте фильтр."
+        selected={selectedIds}
+        onSelectedChange={setSelectedIds}
       />
 
       {filterOpen && (
@@ -242,6 +253,11 @@ export default function Screens() {
       {editScreen && (
         <ScreenForm screen={editScreen} dicts={dicts} onClose={() => setEditScreen(null)}
           onSaved={() => { setEditScreen(null); load(); }} />
+      )}
+      {exportOpen && (
+        <ExportModal
+          screens={selectedIds.length > 0 ? filtered.filter((s) => selectedIds.includes(s.id)) : filtered}
+          onClose={() => setExportOpen(false)} />
       )}
       {addClientOpen && (
         <AddClientModal screens={rows} onClose={() => setAddClientOpen(false)}
@@ -437,6 +453,127 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
         </div>
         <span className="hint">
           Координаты задаются в секции «Адрес и координаты» — карта обновится сразу после их ввода.
+        </span>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------- Экспорт инвентаря в Excel ----------
+const EXPORT_COLUMNS: { key: string; label: string; always?: boolean }[] = [
+  { key: 'code', label: 'Код', always: true },
+  { key: 'name', label: 'Название' },
+  { key: 'side', label: 'Сторона' },
+  { key: 'region', label: 'Область' },
+  { key: 'city', label: 'Город' },
+  { key: 'address', label: 'Адрес, направление' },
+  { key: 'type', label: 'Тип экрана' },
+  { key: 'size', label: 'Размер, м' },
+  { key: 'resolution', label: 'Разрешение' },
+  { key: 'pitch', label: 'Шаг пикселя' },
+  { key: 'brightness', label: 'Яркость' },
+  { key: 'orientation', label: 'Ориентация' },
+  { key: 'loop', label: 'Длина петли' },
+  { key: 'work', label: 'Часы работы' },
+  { key: 'price', label: 'Ставка ₽/сек за 30 дн.' },
+  { key: 'price10', label: 'Ролик 10 сек / 30 дн.' },
+  { key: 'tax', label: 'Налог' },
+  { key: 'owner', label: 'Владелец' },
+  { key: 'status', label: 'Статус' },
+  { key: 'tags', label: 'Теги' },
+  { key: 'coords', label: 'Координаты' },
+  { key: 'comment', label: 'Комментарий' },
+];
+
+const DEFAULT_EXPORT_COLS = ['code', 'name', 'side', 'city', 'address', 'type', 'size', 'loop', 'price', 'owner', 'status'];
+
+function ExportModal(props: { screens: Screen[]; onClose: () => void }) {
+  const today = new Date();
+  const [filename, setFilename] = useState(`Адресная программа - ${fmtDate(todayISO())}`);
+  const [links, setLinks] = useState(true);
+  const [cols, setCols] = useState<string[]>(DEFAULT_EXPORT_COLS);
+  const [year, setYear] = useState(today.getFullYear());
+  const [months, setMonths] = useState<string[]>([`${today.getFullYear()}-${today.getMonth() + 1}`]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const years = [today.getFullYear(), today.getFullYear() + 1];
+  const toggle = (list: string[], set: (v: string[]) => void, key: string) =>
+    set(list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+
+  async function run() {
+    setBusy(true); setError('');
+    try {
+      await downloadPost('/screens/export', {
+        screen_ids: props.screens.map((s) => s.id),
+        columns: cols,
+        photo_links: links,
+        months: months.map((m) => {
+          const [y, mo] = m.split('-').map(Number);
+          return { year: y, month: mo };
+        }),
+      }, `${filename || 'Экспорт экранов'}.xlsx`);
+      props.onClose();
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal title="Экспорт в Microsoft Excel"
+      subtitle={`${props.screens.length} ${plural(props.screens.length, ['экран', 'экрана', 'экранов'])} в выгрузке`}
+      onClose={props.onClose}
+      footer={<>
+        <button className="btn secondary" onClick={props.onClose}>Отмена</button>
+        <button className="btn" onClick={run} disabled={busy || cols.length === 0}>
+          {busy ? 'Готовим файл…' : 'Экспорт'}
+        </button>
+      </>}>
+      {error && <Alert tone="error">{error}</Alert>}
+
+      <TextInput label="Название файла" value={filename} onChange={setFilename} hint="Расширение .xlsx добавится само" />
+
+      <label className="check-row" style={{ marginTop: 'var(--sp-3)' }}>
+        <input type="checkbox" checked={links} onChange={(e) => setLinks(e.target.checked)} />
+        <span>
+          Фото и карта как ссылки
+          <span className="hint">Карта — ссылка на Яндекс.Карты, фото — ссылка на карточку экрана в системе</span>
+        </span>
+      </label>
+
+      <div className="export-section">
+        <span className="eyebrow">Столбцы</span>
+        <div className="check-grid">
+          {EXPORT_COLUMNS.map((c) => (
+            <label key={c.key} className={'check-row' + (c.always ? ' is-locked' : '')}>
+              <input type="checkbox" checked={c.always || cols.includes(c.key)} disabled={c.always}
+                onChange={() => toggle(cols, setCols, c.key)} />
+              <span>{c.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="export-section">
+        <span className="eyebrow">Месяцы — загрузка петли</span>
+        <div className="tabs" style={{ marginBottom: 'var(--sp-3)' }}>
+          {years.map((y) => (
+            <button key={y} className={`tab ${year === y ? 'active' : ''}`} onClick={() => setYear(y)}>{y}</button>
+          ))}
+        </div>
+        <div className="check-grid">
+          {MONTHS_FULL.map((m, i) => {
+            const key = `${year}-${i + 1}`;
+            return (
+              <label key={key} className="check-row">
+                <input type="checkbox" checked={months.includes(key)} onChange={() => toggle(months, setMonths, key)} />
+                <span style={{ textTransform: 'capitalize' }}>{m}</span>
+              </label>
+            );
+          })}
+        </div>
+        <span className="hint">
+          {months.length === 0
+            ? 'Месяцы не выбраны — файл будет без колонок занятости.'
+            : `Выбрано ${months.length}: по каждому месяцу колонка с пиковой загрузкой петли и свободными секундами.`}
         </span>
       </div>
     </Modal>

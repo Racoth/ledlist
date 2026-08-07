@@ -538,6 +538,42 @@ table.data tr.clickable { cursor: pointer; }
    ========================================================================== */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 
+/* --- Выбор строк и окно экспорта ------------------------------------------- */
+.sel-cell { width: 38px; text-align: center; }
+.sel-cell input[type='checkbox'] {
+  width: 16px; height: 16px;
+  cursor: pointer;
+  accent-color: var(--action);
+  vertical-align: middle;
+}
+.table-wrap.inventory tbody tr.is-picked td { background: #eef3fb; }
+
+.export-section { margin-top: var(--sp-5); }
+.export-section .eyebrow { display: block; margin-bottom: var(--sp-2); }
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px var(--sp-3);
+}
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 0;
+}
+.check-row input[type='checkbox'] {
+  width: 16px; height: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--action);
+  cursor: pointer;
+}
+.check-row .hint { display: block; margin-top: 1px; }
+.check-row.is-locked { color: var(--ink-3); cursor: default; }
+.check-row.is-locked input { cursor: default; }
+
 /* --- Карта и фото экрана --------------------------------------------------- */
 .media-block { margin-top: var(--sp-5); }
 .media-block .eyebrow { display: block; margin-bottom: var(--sp-2); }

@@ -46,6 +46,27 @@ export const post = <T = any>(path: string, body?: any) => api<T>(path, { method
 export const put = <T = any>(path: string, body?: any) => api<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) });
 export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' });
 
+/** POST, ответ которого — файл: скачивает его под указанным именем. */
+export async function downloadPost(path: string, body: any, filename: string): Promise<void> {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, (data as any).error ?? `Ошибка ${res.status}`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function uploadFile<T = any>(path: string, file: File, extra: Record<string, string | number> = {}): Promise<T> {
   const fd = new FormData();
   fd.append('file', file);

@@ -504,6 +504,150 @@ api.delete('/creatives/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Экспорт инвентаря в Excel ----------
+const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+/** Доступные столбцы выгрузки: ключ → заголовок, ширина и как достать значение. */
+const EXPORT_COLUMNS: Record<string, { title: string; width: number; value: (s: any) => any }> = {
+  code:        { title: 'Код', width: 16, value: (s) => s.code },
+  name:        { title: 'Название', width: 26, value: (s) => s.name },
+  side:        { title: 'Сторона', width: 9, value: (s) => s.side ?? '' },
+  region:      { title: 'Область', width: 22, value: (s) => s.region ?? '' },
+  city:        { title: 'Город', width: 16, value: (s) => s.city_name ?? '' },
+  address:     { title: 'Адрес, направление', width: 34, value: (s) => s.address ?? '' },
+  type:        { title: 'Тип экрана', width: 15, value: (s) => s.type_name ?? '' },
+  size:        { title: 'Размер, м', width: 12, value: (s) => (s.width_m ? `${s.width_m}×${s.height_m}` : '') },
+  resolution:  { title: 'Разрешение, px', width: 15, value: (s) => (s.res_w ? `${s.res_w}×${s.res_h}` : '') },
+  pitch:       { title: 'Шаг пикселя', width: 12, value: (s) => s.pixel_pitch ?? '' },
+  brightness:  { title: 'Яркость, нит', width: 13, value: (s) => s.brightness ?? '' },
+  orientation: { title: 'Ориентация', width: 14, value: (s) => (s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная') },
+  loop:        { title: 'Петля, сек', width: 11, value: (s) => s.loop_duration_sec },
+  work:        { title: 'Часы работы', width: 14, value: (s) => `${s.work_from}–${s.work_to}` },
+  price:       { title: 'Ставка ₽/сек за 30 дн.', width: 21, value: (s) => s.price_per_sec_month },
+  price10:     { title: 'Ролик 10 сек / 30 дн., ₽', width: 22, value: (s) => s.price_per_sec_month * 10 },
+  tax:         { title: 'Налог', width: 16, value: (s) => s.tax_name ?? '' },
+  owner:       { title: 'Владелец', width: 26, value: (s) => s.owner_name ?? '' },
+  status:      { title: 'Статус', width: 17, value: (s) => ({ active: 'Активен', maintenance: 'На обслуживании', inactive: 'Отключён' } as any)[s.status] ?? s.status },
+  tags:        { title: 'Теги', width: 18, value: (s) => s.tags ?? '' },
+  coords:      { title: 'Координаты', width: 20, value: (s) => (s.lat != null && s.lng != null ? `${s.lat}, ${s.lng}` : '') },
+  comment:     { title: 'Комментарий', width: 30, value: (s) => s.comment ?? '' },
+};
+
+api.post('/screens/export', async (req, res) => {
+  expireReservations();
+  const t = tenantOf(req);
+  const { screen_ids, columns, months, photo_links } = req.body ?? {};
+
+  const rows = db.prepare(`
+    SELECT s.*, c.name AS city_name, c.region, st.name AS type_name,
+           o.name AS owner_name, tr.name AS tax_name,
+           (SELECT COUNT(*) FROM screen_photos p WHERE p.screen_id = s.id) AS photo_count
+    FROM screens s
+    LEFT JOIN cities c ON c.id = s.city_id
+    LEFT JOIN screen_types st ON st.id = s.screen_type_id
+    LEFT JOIN owners o ON o.id = s.owner_id
+    LEFT JOIN tax_regimes tr ON tr.id = s.tax_regime_id
+    WHERE s.tenant_id = ? ORDER BY s.code
+  `).all(t) as any[];
+
+  const ids: number[] | null = Array.isArray(screen_ids) && screen_ids.length > 0 ? screen_ids.map(Number) : null;
+  const screens = ids ? rows.filter((s) => ids.includes(s.id)) : rows;
+  if (screens.length === 0) return res.status(400).json({ error: 'Нет экранов для выгрузки' });
+
+  const colKeys: string[] = (Array.isArray(columns) && columns.length > 0 ? columns : ['code', 'name', 'side', 'city', 'address'])
+    .filter((k: string) => EXPORT_COLUMNS[k]);
+  if (!colKeys.includes('code')) colKeys.unshift('code');   // код — обязательный идентификатор строки
+
+  const monthList: { year: number; month: number }[] = Array.isArray(months)
+    ? months.map((m: any) => ({ year: Number(m.year), month: Number(m.month) }))
+        .filter((m) => m.year > 1970 && m.month >= 1 && m.month <= 12)
+        .sort((a, b) => a.year - b.year || a.month - b.month)
+    : [];
+
+  const { default: ExcelJS } = await import('exceljs');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LED-List';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Адресная программа', {
+    views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }],
+  });
+
+  ws.columns = [
+    ...colKeys.map((k) => ({ header: EXPORT_COLUMNS[k].title, key: k, width: EXPORT_COLUMNS[k].width })),
+    ...(photo_links ? [
+      { header: 'Карта', key: '_map', width: 14 },
+      { header: 'Фото', key: '_photo', width: 14 },
+    ] : []),
+    ...monthList.map((m) => ({
+      header: `${MONTHS_RU[m.month - 1]} ${m.year}`,
+      key: `m${m.year}_${m.month}`,
+      width: 15,
+    })),
+  ];
+
+  const head = ws.getRow(1);
+  head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF12161D' } };
+  head.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  head.height = 30;
+
+  for (const s of screens) {
+    const row: any = {};
+    for (const k of colKeys) row[k] = EXPORT_COLUMNS[k].value(s);
+
+    if (photo_links) {
+      row._map = s.lat != null && s.lng != null
+        ? { text: 'Открыть карту', hyperlink: `https://yandex.ru/maps/?pt=${s.lng},${s.lat}&z=17&l=map` }
+        : '';
+      // Фото отдаются только авторизованным, поэтому ссылка ведёт в приложение, а не на файл:
+      // класть токен доступа в файл, который уйдёт по почте, нельзя.
+      row._photo = s.photo_count > 0
+        ? { text: `Фото (${s.photo_count})`, hyperlink: `${req.protocol}://${req.get('host')}/screens?screen=${s.id}` }
+        : '';
+    }
+
+    // Загрузка петли по выбранным месяцам: пиковый день месяца
+    for (const m of monthList) {
+      const from = `${m.year}-${String(m.month).padStart(2, '0')}-01`;
+      const last = new Date(m.year, m.month, 0).getDate();
+      const to = `${m.year}-${String(m.month).padStart(2, '0')}-${last}`;
+      const load = loopLoad(s.id, from, to);
+      row[`m${m.year}_${m.month}`] = load ? `${load.max_load_pct}% · своб. ${load.free_sec} сек` : '';
+    }
+    ws.addRow(row);
+  }
+
+  // Оформление: рамки, выравнивание, заливка месячных ячеек по уровню загрузки
+  const monthStart = colKeys.length + (photo_links ? 2 : 0) + 1;
+  ws.eachRow((row, i) => {
+    row.eachCell((cell, col) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFDDE1E9' } },
+        left: { style: 'thin', color: { argb: 'FFDDE1E9' } },
+        bottom: { style: 'thin', color: { argb: 'FFDDE1E9' } },
+        right: { style: 'thin', color: { argb: 'FFDDE1E9' } },
+      };
+      if (i === 1) return;
+      cell.alignment = { vertical: 'middle', wrapText: col <= colKeys.length };
+      if (col >= monthStart) {
+        const pct = Number(String(cell.value ?? '').split('%')[0]);
+        if (!Number.isNaN(pct)) {
+          const argb = pct >= 95 ? 'FFF6D6D6' : pct >= 70 ? 'FFFDEBC8' : pct > 0 ? 'FFD9F0DC' : 'FFF3F5F8';
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        }
+      }
+    });
+  });
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: colKeys.length } };
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="export.xlsx"');
+  await wb.xlsx.write(res);
+  res.end();
+});
+
 // ---------- Фотографии экрана ----------
 const photoUpload = multer({
   storage: multer.diskStorage({
