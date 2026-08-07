@@ -160,7 +160,7 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
   const [screens, setScreens] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<any[]>([]);
   const [form, setForm] = useState<any>({
-    screen_id: '', duration_sec: 10, plays_per_day: 720,
+    screen_id: '', duration_sec: 10,
     date_from: todayISO(), date_to: plusDaysISO(29), time_slot_id: '', creative_id: '',
   });
   const [capacity, setCapacity] = useState<any | null>(null);
@@ -184,7 +184,7 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
           }),
           post('/calc/price', {
             screen_id: Number(form.screen_id), duration_sec: Number(form.duration_sec),
-            plays_per_day: Number(form.plays_per_day), date_from: form.date_from, date_to: form.date_to,
+            date_from: form.date_from, date_to: form.date_to,
             time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
             discount_percent: props.campaign.discount_percent,
           }),
@@ -193,14 +193,14 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
       } catch (e: any) { setError(e.message); }
     }, 300);
     return () => clearTimeout(timer);
-  }, [form.screen_id, form.duration_sec, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id]);
+  }, [form.screen_id, form.duration_sec, form.date_from, form.date_to, form.time_slot_id]);
 
   async function add() {
     setError('');
     try {
       const res = await post(`/campaigns/${props.campaign.id}/slots`, {
         screen_id: Number(form.screen_id), duration_sec: Number(form.duration_sec),
-        date_from: form.date_from, date_to: form.date_to, plays_per_day: Number(form.plays_per_day),
+        date_from: form.date_from, date_to: form.date_to,
         time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
         creative_id: form.creative_id ? Number(form.creative_id) : null,
         price: calc?.total,
@@ -231,8 +231,6 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
         <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={(v) => setForm({ ...form, duration_sec: v })}
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
-        <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day} onChange={(v) => setForm({ ...form, plays_per_day: v })}
-          hint={screen ? `≈ ${Math.round(Number(form.plays_per_day || 0) / 18)} в час при 18 ч работы` : undefined} />
         <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
         <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
         <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
@@ -262,13 +260,14 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
         <div className="panel" style={{ marginTop: 16, marginBottom: 0 }}>
           <h3>Расчёт стоимости</h3>
           <dl className="kv">
-            <dt>Дней в периоде</dt><dd>{calc.days}</dd>
-            <dt>База: {fmtMoney(calc.price_per_sec)}/сек × {form.duration_sec} сек × {form.plays_per_day} вых. × {calc.days} дн.</dt>
-            <dd>{fmtMoney(calc.base)}</dd>
+            <dt>Ставка экрана</dt><dd>{fmtMoney(calc.price_per_sec_month)} за 1 сек / 30 дней</dd>
+            <dt>Ролик {form.duration_sec} сек на 30 дней</dt><dd>{fmtMoney(calc.month_price)}</dd>
+            <dt>Период: {calc.days} дн. из {calc.period_days}</dt><dd>{fmtMoney(calc.base)}</dd>
             {calc.coef !== 1 && <><dt>Коэффициент тайм-слота «{calc.time_slot}»</dt><dd>×{calc.coef}</dd></>}
             {calc.discount_percent > 0 && <><dt>Скидка {calc.discount_percent}%</dt><dd>−{fmtMoney(calc.discount_amount)}</dd></>}
             {calc.tax_rate > 0 && <><dt>Налог ({calc.tax_name})</dt><dd>+{fmtMoney(calc.tax)}</dd></>}
             <dt><b>Итого за слот</b></dt><dd><b>{fmtMoney(calc.total)}</b></dd>
+            <dt>Выходов в сутки</dt><dd>≈ {calc.plays_per_day} <span className="muted">(один показ за оборот петли)</span></dd>
           </dl>
         </div>
       )}

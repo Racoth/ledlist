@@ -127,14 +127,32 @@ export function checkCampaignCapacity(campaignId: number): { ok: boolean; reason
 
 /**
  * Калькулятор стоимости слота.
- * база = цена_за_секунду × длительность × выходов_в_сутки × дней
- * (если задана только цена за выход — она трактуется как цена 1 выхода 5-секундного ролика)
+ * Базовая ставка экрана — цена ОДНОЙ СЕКУНДЫ ролика при размещении на 30 дней.
+ * Пример: ставка 2500 ₽/сек → ролик 10 сек на месяц стоит 25 000 ₽.
+ *
+ * база = ставка_за_секунду_в_месяц × длительность_ролика × (дней / 30)
  * итог = база × коэф_тайм-слота × (1 − скидка%) ; налог считается сверху, если режим с НДС.
+ *
+ * Количество выходов в сутки на цену не влияет: оно определяется петлёй —
+ * ролик показывается один раз за оборот, то есть часы_работы / длина_петли.
  */
+export const PRICE_PERIOD_DAYS = 30;
+
+/** Сколько раз ролик выйдет за сутки: один показ на оборот петли в часы работы. */
+export function naturalPlaysPerDay(workFrom: string, workTo: string, loopSec: number): number {
+  if (!loopSec) return 0;
+  const toSec = (t: string) => {
+    const [h, m] = String(t ?? '').split(':').map(Number);
+    return (h || 0) * 3600 + (m || 0) * 60;
+  };
+  const seconds = Math.max(0, toSec(workTo) - toSec(workFrom));
+  return Math.floor(seconds / loopSec);
+}
+
 export function calcPrice(params: {
   screen_id: number;
   duration_sec: number;
-  plays_per_day: number;
+  plays_per_day?: number;
   date_from: string;
   date_to: string;
   time_slot_id?: number | null;
@@ -147,33 +165,39 @@ export function calcPrice(params: {
   if (!screen) return null;
 
   const days = eachDay(params.date_from, params.date_to).length;
-  const perSec = screen.price_per_sec > 0 ? screen.price_per_sec : screen.price_per_play / 5;
+  const rate = screen.price_per_sec_month ?? 0;
   let coef = 1;
   let timeSlotName: string | null = null;
   if (params.time_slot_id) {
     const ts = db.prepare('SELECT name, price_coef FROM time_slots WHERE id = ?').get(params.time_slot_id) as any;
     if (ts) { coef = ts.price_coef; timeSlotName = ts.name; }
   }
-  const base = perSec * params.duration_sec * params.plays_per_day * days;
+
+  const monthPrice = rate * params.duration_sec;               // цена ролика за 30 дней
+  const base = monthPrice * (days / PRICE_PERIOD_DAYS);
   const withCoef = base * coef;
   const discountPct = params.discount_percent ?? 0;
   const discountAmount = withCoef * (discountPct / 100);
   const net = withCoef - discountAmount;
   const taxRate = screen.tax_rate ?? 0;
   const tax = net * (taxRate / 100);
+  const r2 = (v: number) => Math.round(v * 100) / 100;
   return {
     days,
-    price_per_sec: perSec,
-    base: Math.round(base * 100) / 100,
+    period_days: PRICE_PERIOD_DAYS,
+    price_per_sec_month: rate,
+    month_price: r2(monthPrice),
+    plays_per_day: naturalPlaysPerDay(screen.work_from, screen.work_to, screen.loop_duration_sec),
+    base: r2(base),
     time_slot: timeSlotName,
     coef,
     discount_percent: discountPct,
-    discount_amount: Math.round(discountAmount * 100) / 100,
-    net: Math.round(net * 100) / 100,
+    discount_amount: r2(discountAmount),
+    net: r2(net),
     tax_name: screen.tax_name ?? null,
     tax_rate: taxRate,
-    tax: Math.round(tax * 100) / 100,
-    total: Math.round((net + tax) * 100) / 100,
+    tax: r2(tax),
+    total: r2(net + tax),
   };
 }
 

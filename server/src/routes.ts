@@ -63,7 +63,7 @@ for (const [route, cfg] of Object.entries(dicts)) {
 
 // ---------- Экраны ----------
 const SCREEN_FIELDS = ['code','name','side','address','city_id','lat','lng','width_m','height_m','res_w','res_h','pixel_pitch',
-  'brightness','screen_type_id','orientation','loop_duration_sec','work_from','work_to','price_per_play','price_per_sec',
+  'brightness','screen_type_id','orientation','loop_duration_sec','work_from','work_to','price_per_play','price_per_sec','price_per_sec_month',
   'tax_regime_id','owner_id','status','tags','comment'];
 
 api.get('/screens', (req, res) => {
@@ -179,13 +179,14 @@ api.post('/screens/:id/book', (req, res) => {
   `).run(t, number, client_id).lastInsertRowid as number;
 
   const calc = calcPrice({
-    screen_id: id, duration_sec: Number(duration_sec), plays_per_day: Number(plays_per_day ?? 0),
+    screen_id: id, duration_sec: Number(duration_sec),
     date_from, date_to, time_slot_id: time_slot_id ?? null,
   });
   db.prepare(`
     INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, price)
     VALUES (?,?,?,?,?,?,?,?,?)
-  `).run(t, campId, id, duration_sec, date_from, date_to, plays_per_day ?? 0, time_slot_id ?? null, calc?.total ?? 0);
+  `).run(t, campId, id, duration_sec, date_from, date_to,
+    plays_per_day ?? calc?.plays_per_day ?? 0, time_slot_id ?? null, calc?.total ?? 0);
   res.json({ campaign_id: campId, number });
 });
 
@@ -236,7 +237,7 @@ api.post('/capacity/quote', (req, res) => {
     if (!duration) return { screen_id: screenId, ok: false, reason: 'Не задана длительность ролика' };
     const check = checkCapacity(screenId, date_from, date_to, duration);
     const calc = calcPrice({
-      screen_id: screenId, duration_sec: duration, plays_per_day: Number(plays_per_day ?? 0),
+      screen_id: screenId, duration_sec: duration,
       date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: Number(discount_percent) || 0,
     });
     return {
@@ -352,13 +353,13 @@ api.post('/campaigns/bulk', (req, res) => {
     let total = 0;
     for (const it of items) {
       const calc = calcPrice({
-        screen_id: it.screen_id, duration_sec: it.duration_sec, plays_per_day: Number(plays_per_day ?? 0),
+        screen_id: it.screen_id, duration_sec: it.duration_sec,
         date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: pct,
       });
       const price = calc?.total ?? 0;
       total += price;
       insertSlot.run(t, campId, it.screen_id, it.duration_sec, date_from, date_to,
-        plays_per_day ?? 0, time_slot_id ?? null, price);
+        plays_per_day ?? calc?.plays_per_day ?? 0, time_slot_id ?? null, price);
     }
     return { campaign_id: campId, number, status: target, reserve_until: reserveUntil, slots: items.length, total };
   });
@@ -434,18 +435,16 @@ api.post('/campaigns/:id/slots', (req, res) => {
     return res.status(409).json({ error: check.reason });
   }
 
-  let finalPrice = price;
-  if (finalPrice === undefined || finalPrice === null) {
-    const calc = calcPrice({
-      screen_id: Number(screen_id), duration_sec: Number(duration_sec), plays_per_day: Number(plays_per_day ?? 0),
-      date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: c.discount_percent,
-    });
-    finalPrice = calc?.total ?? 0;
-  }
+  const calc = calcPrice({
+    screen_id: Number(screen_id), duration_sec: Number(duration_sec),
+    date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: c.discount_percent,
+  });
+  const finalPrice = price ?? calc?.total ?? 0;
   const info = db.prepare(`
     INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, creative_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, price)
     VALUES (?,?,?,?,?,?,?,?,?,?)
-  `).run(t, c.id, screen_id, creative_id ?? null, duration_sec, date_from, date_to, plays_per_day ?? 0, time_slot_id ?? null, finalPrice);
+  `).run(t, c.id, screen_id, creative_id ?? null, duration_sec, date_from, date_to,
+    plays_per_day ?? calc?.plays_per_day ?? 0, time_slot_id ?? null, finalPrice);
   res.json({ slot: db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(info.lastInsertRowid), capacity_warning: check.ok ? null : check.reason });
 });
 

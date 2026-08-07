@@ -12,7 +12,8 @@ interface Screen {
   width_m: number | null; height_m: number | null; res_w: number | null; res_h: number | null;
   pixel_pitch: string | null; brightness: number | null; screen_type_id: number | null; type_name?: string;
   orientation: string; loop_duration_sec: number; work_from: string; work_to: string;
-  price_per_play: number; price_per_sec: number; tax_regime_id: number | null; tax_name?: string;
+  price_per_play: number; price_per_sec: number; price_per_sec_month: number;
+  tax_regime_id: number | null; tax_name?: string;
   owner_id: number | null; owner_name?: string; status: string; tags: string | null; comment: string | null;
   load?: { max_load_pct: number; avg_load_pct: number; free_sec: number; loop: number } | null;
 }
@@ -35,6 +36,13 @@ const FILTER_FIELDS = [
 ];
 
 const OP_LABELS: Record<string, string> = { contains: 'содержит', eq: 'равно', gte: '≥', lte: '≤' };
+
+/** Подсказка к ставке: во что она превращается для типового ролика. */
+function ratePreview(rate: any): string {
+  const r = Number(rate);
+  if (!r) return 'Ставка, из которой считается размещение: ставка × длительность × дней/30';
+  return `Ролик 10 сек на 30 дней — ${fmtMoney(r * 10)}`;
+}
 const STATUS_RU: Record<string, string> = { active: 'Активен', maintenance: 'На обслуживании', inactive: 'Отключён' };
 
 function condMatches(s: Screen, c: FilterCond): boolean {
@@ -130,7 +138,13 @@ export default function Screens() {
     { key: 'orientation', title: 'Ориентация', optional: true, render: (s) => s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная' },
     { key: 'loop', title: 'Петля, сек', optional: true, sortValue: (s) => s.loop_duration_sec, render: (s) => <span className="num">{s.loop_duration_sec}</span> },
     { key: 'work', title: 'Часы работы', optional: true, render: (s) => <span className="mono">{s.work_from}–{s.work_to}</span> },
-    { key: 'price', title: 'Цена, ₽/сек', optional: true, sortValue: (s) => s.price_per_sec, render: (s) => <span className="num">{fmtMoney(s.price_per_sec)}</span> },
+    { key: 'price', title: 'Цена ₽/сек за 30 дн.', optional: true, sortValue: (s) => s.price_per_sec_month,
+      render: (s) => (
+        <span className="cell-stack">
+          <b className="num">{fmtMoney(s.price_per_sec_month)}</b>
+          <span className="sub">10 сек — {fmtMoney(s.price_per_sec_month * 10)}</span>
+        </span>
+      ) },
     { key: 'owner_name', title: 'Владелец', optional: true },
     { key: 'tax_name', title: 'Налоговый режим', optional: true },
     { key: 'tags', title: 'Теги', optional: true },
@@ -307,12 +321,13 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
     delete body.id; delete body.city_name; delete body.region; delete body.type_name;
     delete body.owner_name; delete body.tax_name; delete body.load;
     for (const k of ['city_id', 'screen_type_id', 'owner_id', 'tax_regime_id']) body[k] = body[k] ? Number(body[k]) : null;
-    for (const k of ['lat', 'lng', 'width_m', 'height_m', 'res_w', 'res_h', 'brightness', 'loop_duration_sec', 'price_per_play', 'price_per_sec']) {
+    for (const k of ['lat', 'lng', 'width_m', 'height_m', 'res_w', 'res_h', 'brightness', 'loop_duration_sec', 'price_per_play', 'price_per_sec', 'price_per_sec_month']) {
       body[k] = body[k] === '' || body[k] == null ? null : Number(body[k]);
     }
     body.loop_duration_sec = body.loop_duration_sec ?? 60;
     body.price_per_play = body.price_per_play ?? 0;
     body.price_per_sec = body.price_per_sec ?? 0;
+    body.price_per_sec_month = body.price_per_sec_month ?? 0;
     try {
       if (props.screen.id) await put(`/screens/${props.screen.id}`, body);
       else await post('/screens', body);
@@ -387,10 +402,9 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
       <div className="form-section">
         <h3>Финансы</h3>
         <div className="form-grid">
-          <TextInput label="Цена за секунду показа, ₽" type="number" step="0.1" value={s.price_per_sec} onChange={set('price_per_sec')}
-            hint="Базовая ставка калькулятора" />
-          <TextInput label="Цена за выход (5 сек), ₽" type="number" step="0.1" value={s.price_per_play} onChange={set('price_per_play')}
-            hint="Применяется, если цена за секунду не задана" />
+          <TextInput label="Цена 1 секунды за 30 дней, ₽" type="number" step="50" required
+            value={s.price_per_sec_month} onChange={set('price_per_sec_month')}
+            hint={ratePreview(s.price_per_sec_month)} />
           <SelectInput label="Налоговый режим" value={s.tax_regime_id} onChange={set('tax_regime_id')}
             options={d.taxes.map((t: any) => ({ value: t.id, label: t.name }))} />
         </div>
@@ -622,7 +636,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
   const lastDay = new Date(props.year, props.month, 0).getDate();
   const mm = String(props.month).padStart(2, '0');
   const [form, setForm] = useState<any>({
-    client_id: '', duration_sec: 10, plays_per_day: 720,
+    client_id: '', duration_sec: 10,
     date_from: `${props.year}-${mm}-01`, date_to: `${props.year}-${mm}-${lastDay}`, time_slot_id: '',
   });
   const [capacity, setCapacity] = useState<any | null>(null);
@@ -642,7 +656,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
         const [cap, price] = await Promise.all([
           post('/capacity/check', { screen_id: props.screen.id, date_from: form.date_from, date_to: form.date_to, duration_sec: Number(form.duration_sec) }),
           post('/calc/price', {
-            screen_id: props.screen.id, duration_sec: Number(form.duration_sec), plays_per_day: Number(form.plays_per_day),
+            screen_id: props.screen.id, duration_sec: Number(form.duration_sec),
             date_from: form.date_from, date_to: form.date_to, time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
           }),
         ]);
@@ -650,7 +664,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
       } catch (e: any) { setError(e.message); }
     }, 300);
     return () => clearTimeout(timer);
-  }, [form.duration_sec, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id]);
+  }, [form.duration_sec, form.date_from, form.date_to, form.time_slot_id]);
 
   async function book() {
     if (!form.client_id) { setError('Выберите клиента — на него будет оформлена бронь.'); return; }
@@ -658,7 +672,7 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
     try {
       await post(`/screens/${props.screen.id}/book`, {
         client_id: Number(form.client_id), date_from: form.date_from, date_to: form.date_to,
-        duration_sec: Number(form.duration_sec), plays_per_day: Number(form.plays_per_day),
+        duration_sec: Number(form.duration_sec),
         time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
       });
       props.onBooked();
@@ -682,7 +696,6 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
         <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={(v) => setForm({ ...form, duration_sec: v })}
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
-        <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day} onChange={(v) => setForm({ ...form, plays_per_day: v })} />
         <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
         <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
         <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
@@ -705,8 +718,13 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
       {calc && (
         <div className="panel" style={{ marginTop: 4, marginBottom: 0 }}>
           <dl className="kv">
-            <dt>Дней в периоде</dt><dd>{calc.days}</dd>
-            <dt>Стоимость размещения</dt><dd><b>{fmtMoney(calc.total)}</b></dd>
+            <dt>Ставка экрана</dt><dd>{fmtMoney(calc.price_per_sec_month)} за 1 сек / 30 дней</dd>
+            <dt>Ролик {form.duration_sec} сек на 30 дней</dt><dd>{fmtMoney(calc.month_price)}</dd>
+            <dt>Период: {calc.days} дн. из {calc.period_days}</dt><dd>{fmtMoney(calc.base)}</dd>
+            {calc.coef !== 1 && <><dt>Тайм-слот «{calc.time_slot}»</dt><dd>×{calc.coef}</dd></>}
+            {calc.tax_rate > 0 && <><dt>Налог ({calc.tax_name})</dt><dd>+{fmtMoney(calc.tax)}</dd></>}
+            <dt><b>Стоимость размещения</b></dt><dd><b>{fmtMoney(calc.total)}</b></dd>
+            <dt>Выходов в сутки</dt><dd>≈ {calc.plays_per_day}</dd>
           </dl>
         </div>
       )}
@@ -731,7 +749,7 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
   const [form, setForm] = useState<any>({
     client_id: '', manager_id: '', discount_id: '', discount_percent: 0,
     date_from: todayISO(), date_to: plusDaysISO(29),
-    duration_sec: 10, plays_per_day: 720, time_slot_id: '', status: 'reserved',
+    duration_sec: 10, time_slot_id: '', status: 'reserved',
   });
   const [sel, setSel] = useState<Record<number, number>>({});
   const [q, setQ] = useState('');
@@ -756,7 +774,6 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
       try {
         setQuote(await post('/capacity/quote', {
           date_from: form.date_from, date_to: form.date_to,
-          plays_per_day: Number(form.plays_per_day) || 0,
           time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
           discount_percent: Number(form.discount_percent) || 0,
           screens: selIds.map((id) => ({ screen_id: id, duration_sec: sel[id] })),
@@ -764,7 +781,7 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
       } catch (e: any) { setError(e.message); }
     }, 300);
     return () => clearTimeout(timer);
-  }, [selKey, form.date_from, form.date_to, form.plays_per_day, form.time_slot_id, form.discount_percent]);
+  }, [selKey, form.date_from, form.date_to, form.time_slot_id, form.discount_percent]);
 
   const available = props.screens.filter((s) => s.status === 'active');
   const shown = available.filter((s) => !q ||
@@ -801,7 +818,6 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
         discount_id: form.discount_id ? Number(form.discount_id) : null,
         discount_percent: Number(form.discount_percent) || 0,
         date_from: form.date_from, date_to: form.date_to,
-        plays_per_day: Number(form.plays_per_day) || 0,
         time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
         status: form.status,
         screens: selIds.map((id) => ({ screen_id: id, duration_sec: sel[id] })),
@@ -843,8 +859,6 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
         <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={setAllDuration} hint="Применяется ко всем выбранным экранам"
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
-        <TextInput label="Выходов в сутки" type="number" value={form.plays_per_day}
-          onChange={(v) => setForm({ ...form, plays_per_day: v })} />
         <TextInput label="Период: с" type="date" value={form.date_from} onChange={(v) => setForm({ ...form, date_from: v })} />
         <TextInput label="Период: по" type="date" value={form.date_to} onChange={(v) => setForm({ ...form, date_to: v })} />
         <SelectInput label="Тайм-слот" value={form.time_slot_id} onChange={(v) => setForm({ ...form, time_slot_id: v })}
