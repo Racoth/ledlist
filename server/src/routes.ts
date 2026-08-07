@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
+import fs from 'node:fs';
 import { db, hashPassword, UPLOADS_DIR } from './db.js';
 import { login, requireAuth, requireRole, tenantOf } from './auth.js';
 import { loopLoad, checkCapacity, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
@@ -500,6 +501,71 @@ api.get('/creatives/:id/file', (req, res) => {
 api.delete('/creatives/:id', (req, res) => {
   db.prepare('UPDATE ad_slots SET creative_id = NULL WHERE creative_id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
   db.prepare('DELETE FROM creatives WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
+  res.json({ ok: true });
+});
+
+// ---------- Фотографии экрана ----------
+const photoUpload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (_req, file, cb) => cb(null, `scr-${Date.now()}-${Math.round(Math.random() * 1e6)}${path.extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Допустимые форматы фото: jpg, png, webp'));
+  },
+});
+
+api.get('/screens/:id/photos', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, filename, mime, size_bytes, sort_order, uploaded_at
+    FROM screen_photos WHERE screen_id = ? AND tenant_id = ?
+    ORDER BY sort_order, id
+  `).all(req.params.id, tenantOf(req));
+  res.json(rows);
+});
+
+api.post('/screens/:id/photos', requireRole('admin', 'superadmin'), photoUpload.single('file'), (req, res) => {
+  const t = tenantOf(req);
+  const screen = db.prepare('SELECT id FROM screens WHERE id = ? AND tenant_id = ?').get(req.params.id, t);
+  if (!screen) return res.status(404).json({ error: 'Экран не найден' });
+  if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
+  const next = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM screen_photos WHERE screen_id = ?')
+    .get(req.params.id) as any;
+  const info = db.prepare(`
+    INSERT INTO screen_photos (tenant_id, screen_id, filename, stored_name, mime, size_bytes, sort_order)
+    VALUES (?,?,?,?,?,?,?)
+  `).run(t, req.params.id, Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
+    req.file.filename, req.file.mimetype, req.file.size, next.n);
+  res.json(db.prepare('SELECT id, filename, mime, size_bytes, sort_order FROM screen_photos WHERE id = ?')
+    .get(info.lastInsertRowid));
+});
+
+api.get('/photos/:id/file', (req, res) => {
+  const p = db.prepare('SELECT stored_name FROM screen_photos WHERE id = ? AND tenant_id = ?')
+    .get(req.params.id, tenantOf(req)) as any;
+  if (!p) return res.status(404).json({ error: 'Не найдено' });
+  res.sendFile(path.join(UPLOADS_DIR, p.stored_name));
+});
+
+// Сделать фото главным: уходит в начало списка
+api.post('/photos/:id/primary', requireRole('admin', 'superadmin'), (req, res) => {
+  const t = tenantOf(req);
+  const p = db.prepare('SELECT screen_id FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  if (!p) return res.status(404).json({ error: 'Не найдено' });
+  const min = db.prepare('SELECT COALESCE(MIN(sort_order), 0) AS n FROM screen_photos WHERE screen_id = ?')
+    .get(p.screen_id) as any;
+  db.prepare('UPDATE screen_photos SET sort_order = ? WHERE id = ?').run(min.n - 1, req.params.id);
+  res.json({ ok: true });
+});
+
+api.delete('/photos/:id', requireRole('admin', 'superadmin'), (req, res) => {
+  const t = tenantOf(req);
+  const p = db.prepare('SELECT stored_name FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  if (!p) return res.status(404).json({ error: 'Не найдено' });
+  db.prepare('DELETE FROM screen_photos WHERE id = ? AND tenant_id = ?').run(req.params.id, t);
+  fs.rm(path.join(UPLOADS_DIR, p.stored_name), { force: true }, () => {});
   res.json({ ok: true });
 });
 

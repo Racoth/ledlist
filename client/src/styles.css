@@ -538,6 +538,129 @@ table.data tr.clickable { cursor: pointer; }
    ========================================================================== */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 
+/* --- Карта и фото экрана --------------------------------------------------- */
+.media-block { margin-top: var(--sp-5); }
+.media-block .eyebrow { display: block; margin-bottom: var(--sp-2); }
+.media-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+  align-items: start;
+}
+.map-box {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.map-box iframe { display: block; width: 100%; height: 232px; border: 0; }
+.map-box.is-empty {
+  height: 268px;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  text-align: center;
+}
+.map-links {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 7px var(--sp-3);
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.map-links .mono { margin-right: auto; color: var(--ink-3); }
+
+.photo-box { display: grid; gap: var(--sp-2); }
+.photo-main {
+  display: block;
+  width: 100%;
+  height: 232px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--surface-3);
+  cursor: zoom-in;
+}
+.photo-main img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-main.is-empty {
+  height: 268px;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  text-align: center;
+  cursor: default;
+}
+.photo-thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
+.photo-thumbs .thumb {
+  width: 54px; height: 40px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--r-1);
+  overflow: hidden;
+  background: var(--surface-3);
+  cursor: pointer;
+}
+.photo-thumbs .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-thumbs .thumb.sel { border-color: var(--focus); }
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(10, 13, 18, .88);
+  display: grid; place-items: center;
+  padding: var(--sp-5);
+  cursor: zoom-out;
+}
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: var(--r-2); }
+.lightbox-close {
+  position: absolute; top: var(--sp-4); right: var(--sp-4);
+  color: #fff; opacity: .85;
+}
+
+/* --- Управление фото в карточке экрана ------------------------------------- */
+.photo-manager { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.pm-item {
+  position: relative;
+  width: 116px; height: 84px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.pm-item.is-primary { border-color: var(--focus); }
+.pm-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pm-badge {
+  position: absolute; left: 0; top: 0;
+  background: var(--focus); color: #fff;
+  font-size: 10px; padding: 1px 6px;
+  border-bottom-right-radius: var(--r-1);
+}
+.pm-actions {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; justify-content: flex-end; gap: 3px;
+  padding: 3px;
+  background: linear-gradient(transparent, rgba(10, 13, 18, .55));
+  opacity: 0; transition: opacity var(--t-fast);
+}
+.pm-item:hover .pm-actions, .pm-item:focus-within .pm-actions { opacity: 1; }
+.pm-add {
+  width: 116px; height: 84px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-2);
+  display: grid; place-items: center; align-content: center; gap: 3px;
+  font-size: 12px; color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color var(--t-fast), color var(--t-fast);
+}
+.pm-add:hover { border-color: var(--focus); color: var(--focus); }
+.pm-add.is-busy { opacity: .6; cursor: progress; }
+
+@media (max-width: 720px) {
+  .media-grid { grid-template-columns: 1fr; }
+}
+
 /* --- Подбор экранов в кампанию -------------------------------------------- */
 .picker { margin: var(--sp-5) 0 var(--sp-4); }
 .picker-head {

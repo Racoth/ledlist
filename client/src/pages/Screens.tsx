@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, put, del, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
+import { get, post, put, del, uploadFile, getToken, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
 import {
   DataTable, Modal, TextInput, SelectInput, TextArea, StatusBadge, LoadBar, ColumnsButton,
   Column, Alert, Icon, LoopTape, LoopRuler, TapeLegend, TapeSegment, seriesColor, loadTone, onColor,
@@ -419,7 +419,171 @@ function ScreenForm(props: { screen: Partial<Screen>; dicts: any; onClose: () =>
           <TextArea label="Комментарий" value={s.comment} onChange={set('comment')} />
         </div>
       </div>
+
+      <div className="form-section">
+        <h3>Карта и фото</h3>
+        <div className="media-grid" style={{ marginBottom: 'var(--sp-3)' }}>
+          <ScreenMap
+            lat={s.lat === '' || s.lat == null ? null : Number(s.lat)}
+            lng={s.lng === '' || s.lng == null ? null : Number(s.lng)}
+            address={s.address} />
+          <div>
+            {props.screen.id ? (
+              <ScreenPhotoManager screenId={props.screen.id} />
+            ) : (
+              <Alert tone="note">Сохраните экран — после этого можно будет загрузить фотографии.</Alert>
+            )}
+          </div>
+        </div>
+        <span className="hint">
+          Координаты задаются в секции «Адрес и координаты» — карта обновится сразу после их ввода.
+        </span>
+      </div>
     </Modal>
+  );
+}
+
+// ---------- Карта и фотографии экрана ----------
+interface ScreenPhoto { id: number; filename: string; mime: string; size_bytes: number; sort_order: number }
+
+const photoUrl = (id: number) => `/api/photos/${id}/file?token=${getToken()}`;
+
+function ScreenMap({ lat, lng, address }: { lat: number | null; lng: number | null; address?: string }) {
+  if (lat == null || lng == null) {
+    return (
+      <div className="map-box is-empty">
+        <span className="empty-state">
+          <b>Координаты не указаны</b>
+          <span>Задайте широту и долготу в карточке экрана — здесь появится карта.</span>
+        </span>
+      </div>
+    );
+  }
+  const d = 0.004;
+  const bbox = [lng - d, lat - d, lng + d, lat + d].map((v) => v.toFixed(5)).join('%2C');
+  return (
+    <div className="map-box">
+      <iframe
+        title={`Карта: ${address ?? 'расположение экрана'}`}
+        loading="lazy"
+        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}`}
+      />
+      <div className="map-links">
+        <span className="mono">{lat.toFixed(5)}, {lng.toFixed(5)}</span>
+        <a href={`https://yandex.ru/maps/?pt=${lng},${lat}&z=17&l=map`} target="_blank" rel="noreferrer">Яндекс</a>
+        <a href={`https://2gis.ru/geo/${lng},${lat}`} target="_blank" rel="noreferrer">2ГИС</a>
+        <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=17/${lat}/${lng}`} target="_blank" rel="noreferrer">OSM</a>
+      </div>
+    </div>
+  );
+}
+
+/** Блок «Карта и фото» для окна занятости: карта слева, галерея справа. */
+function ScreenMedia({ screen }: { screen: Screen }) {
+  const [photos, setPhotos] = useState<ScreenPhoto[]>([]);
+  const [active, setActive] = useState(0);
+  const [zoom, setZoom] = useState(false);
+
+  useEffect(() => {
+    get(`/screens/${screen.id}/photos`).then((p) => { setPhotos(p); setActive(0); }).catch(() => setPhotos([]));
+  }, [screen.id]);
+
+  const current = photos[active];
+  return (
+    <div className="media-block">
+      <span className="eyebrow">Карта и фото</span>
+      <div className="media-grid">
+        <ScreenMap lat={screen.lat} lng={screen.lng} address={screen.address} />
+        <div className="photo-box">
+          {current ? (
+            <>
+              <button className="photo-main" onClick={() => setZoom(true)} title="Открыть крупно">
+                <img src={photoUrl(current.id)} alt={`Фото экрана ${screen.code}`} />
+              </button>
+              {photos.length > 1 && (
+                <div className="photo-thumbs">
+                  {photos.map((p, i) => (
+                    <button key={p.id} className={'thumb' + (i === active ? ' sel' : '')}
+                      onClick={() => setActive(i)} aria-label={`Фото ${i + 1}`}>
+                      <img src={photoUrl(p.id)} alt="" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="photo-main is-empty">
+              <span className="empty-state">
+                <b>Фотографий нет</b>
+                <span>Загрузите их в карточке экрана — кнопка «Изменить» в инвентаре.</span>
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+      {zoom && current && (
+        <div className="lightbox" onClick={() => setZoom(false)} role="dialog" aria-label="Просмотр фото">
+          <img src={photoUrl(current.id)} alt={`Фото экрана ${screen.code}`} />
+          <button className="lightbox-close" aria-label="Закрыть"><Icon name="close" size={22} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Управление фотографиями в карточке экрана: загрузка, удаление, выбор главной. */
+function ScreenPhotoManager({ screenId }: { screenId: number }) {
+  const [photos, setPhotos] = useState<ScreenPhoto[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = () => get(`/screens/${screenId}/photos`).then(setPhotos).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, [screenId]);
+
+  async function onFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = [...(e.target.files ?? [])];
+    if (files.length === 0) return;
+    setBusy(true); setError('');
+    try {
+      for (const f of files) await uploadFile(`/screens/${screenId}/photos`, f);
+      await load();
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); e.target.value = ''; }
+  }
+
+  return (
+    <div>
+      {error && <Alert tone="error">{error}</Alert>}
+      <div className="photo-manager">
+        {photos.map((p, i) => (
+          <div key={p.id} className={'pm-item' + (i === 0 ? ' is-primary' : '')}>
+            <img src={photoUrl(p.id)} alt={p.filename} />
+            {i === 0 && <span className="pm-badge">Главное</span>}
+            <div className="pm-actions">
+              {i !== 0 && (
+                <button type="button" className="btn small secondary" title="Сделать главным"
+                  onClick={async () => { await post(`/photos/${p.id}/primary`); load(); }}>
+                  <Icon name="check" size={13} />
+                </button>
+              )}
+              <button type="button" className="btn small danger" title="Удалить фото"
+                onClick={async () => {
+                  if (!confirm(`Удалить фото «${p.filename}»?`)) return;
+                  try { await del(`/photos/${p.id}`); load(); } catch (e: any) { setError(e.message); }
+                }}>
+                <Icon name="trash" size={13} />
+              </button>
+            </div>
+          </div>
+        ))}
+        <label className={'pm-add' + (busy ? ' is-busy' : '')}>
+          <Icon name="upload" size={18} />
+          <span>{busy ? 'Загрузка…' : 'Добавить фото'}</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple
+            style={{ display: 'none' }} onChange={onFiles} disabled={busy} />
+        </label>
+      </div>
+      <span className="hint">Первое фото показывается как главное. jpg, png, webp — до 20 МБ.</span>
+    </div>
   );
 }
 
@@ -604,6 +768,8 @@ function ScheduleModal(props: { screen: Screen; onClose: () => void }) {
           <TapeLegend segments={monthLoad.segments} free={monthLoad.free} loop={loop} />
         </div>
       )}
+
+      <ScreenMedia screen={props.screen} />
 
       <div className="sgrid-foot">
         <span className="year-switch">

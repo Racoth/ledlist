@@ -147,6 +147,18 @@ CREATE TABLE IF NOT EXISTS campaigns (
   comment TEXT
 );
 
+CREATE TABLE IF NOT EXISTS screen_photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  screen_id INTEGER NOT NULL REFERENCES screens(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  mime TEXT,
+  size_bytes INTEGER,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS creatives (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),
@@ -194,6 +206,7 @@ CREATE TABLE IF NOT EXISTS company_settings (
 CREATE INDEX IF NOT EXISTS idx_slots_screen ON ad_slots(screen_id, date_from, date_to);
 CREATE INDEX IF NOT EXISTS idx_screens_tenant ON screens(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_campaigns_tenant ON campaigns(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_photos_screen ON screen_photos(screen_id, sort_order);
 `);
 
 // ---------- Миграции (для существующих БД) ----------
