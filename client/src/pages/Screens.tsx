@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, put, del, uploadFile, downloadPost, getToken, fmtMoney, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
+import { get, post, put, del, uploadFile, downloadPost, getToken, fmtMoney, fmtNum, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
 import {
   DataTable, Modal, TextInput, SelectInput, TextArea, StatusBadge, LoadBar, ColumnsButton,
   Column, Alert, Icon, LoopTape, LoopRuler, TapeLegend, TapeSegment, seriesColor, loadTone, onColor,
@@ -106,12 +106,21 @@ export default function Screens() {
     const avg = withLoad.length
       ? Math.round(withLoad.reduce((a, s) => a + s.load!.max_load_pct, 0) / withLoad.length)
       : 0;
+    // Деньги: ставка экрана — цена секунды за 30 дней, значит
+    // ставка × длина блока = полная стоимость экрана за месяц.
+    let moneyTotal = 0, moneyUsed = 0;
+    for (const s of withLoad) {
+      const loop = s.load!.loop ?? 0;
+      const rate = s.price_per_sec_month ?? 0;
+      moneyTotal += rate * loop;
+      moneyUsed += rate * (loop - (s.load!.free_sec ?? 0));
+    }
     return {
       freeSec, totalSec, avg,
       counted: withLoad.length,
       // сколько секунд из общей ёмкости уже продано
       usedPct: totalSec ? Math.round(((totalSec - freeSec) / totalSec) * 100) : 0,
-      full: withLoad.filter((s) => s.load!.max_load_pct >= 95).length,
+      moneyTotal, moneyUsed,
     };
   }, [filtered]);
 
@@ -227,9 +236,9 @@ export default function Screens() {
           <div className="l">Свободно секунд</div>
           <div className="v">{summary.freeSec}</div>
         </div>
-        <div className="scard" title="Экраны, где блок загружен на 95% и больше — продавать почти нечего">
-          <div className="l">Загружены ≥ 95%</div>
-          <div className="v">{summary.full} <span className="scard-sub">из {summary.counted} экр.</span></div>
+        <div className="scard is-money" title="Слева — сумма за уже занятые секунды, справа — полная стоимость всех секунд блоков выборки при размещении на 30 дней">
+          <div className="l">Продано из потенциала</div>
+          <div className="v">{fmtNum(summary.moneyUsed)} <span className="scard-sub">из {fmtMoney(summary.moneyTotal)}</span></div>
         </div>
       </div>
 

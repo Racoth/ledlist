@@ -85,6 +85,10 @@ export async function uploadFile<T = any>(path: string, file: File, extra: Recor
 export const fmtMoney = (v: number | null | undefined) =>
   v == null ? '—' : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v) + ' ₽';
 
+/** Число с разрядами, но без знака валюты — когда ₽ ставится один раз на пару значений. */
+export const fmtNum = (v: number | null | undefined) =>
+  v == null ? '—' : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
+
 export const fmtDate = (iso: string | null | undefined) => {
   if (!iso) return '—';
   const [y, m, d] = iso.slice(0, 10).split('-');
