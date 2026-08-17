@@ -1,15 +1,60 @@
 import PDFDocument from 'pdfkit';
+import * as fontkit from 'fontkit';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import type { Response } from 'express';
 import { db, UPLOADS_DIR } from './db.js';
 import { loopLoad, naturalPlaysPerDay, calcPrice } from './engine.js';
 
 const SERVER_ROOT = path.resolve(import.meta.dirname, '..');
-const FONT_DIR = path.join(SERVER_ROOT, 'node_modules', '@expo-google-fonts', 'pt-sans');
-const FONT_REGULAR = path.join(FONT_DIR, '400Regular', 'PTSans_400Regular.ttf');
-const FONT_BOLD = path.join(FONT_DIR, '700Bold', 'PTSans_700Bold.ttf');
 const TILE_CACHE = path.join(SERVER_ROOT, 'data', 'tiles');
+
+/* ============================================================================
+   Шрифт прайса.
+   Приоритет: заданный через окружение → Mazzard, если установлен в системе →
+   встроенный PT Sans. Mazzard коммерческий, поэтому в репозиторий он не
+   кладётся: на другой машине без него прайс просто соберётся на PT Sans.
+   PDF_FONT_DIR / PDF_FONT_FAMILY позволяют указать свой шрифт.
+   ========================================================================== */
+const PT_DIR = path.join(SERVER_ROOT, 'node_modules', '@expo-google-fonts', 'pt-sans');
+const FALLBACK = {
+  name: 'PT Sans',
+  regular: path.join(PT_DIR, '400Regular', 'PTSans_400Regular.ttf'),
+  bold: path.join(PT_DIR, '700Bold', 'PTSans_700Bold.ttf'),
+};
+
+function pickFont() {
+  const family = process.env.PDF_FONT_FAMILY ?? 'MazzardM';
+  const dirs = [
+    process.env.PDF_FONT_DIR,
+    path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts'),
+    'C:\\Windows\\Fonts',
+    '/usr/share/fonts/truetype',
+    path.join(os.homedir(), '.local', 'share', 'fonts'),
+  ].filter(Boolean) as string[];
+
+  for (const dir of dirs) {
+    const regular = path.join(dir, `${family}-Regular.ttf`);
+    const bold = path.join(dir, `${family}-Bold.ttf`);
+    if (fs.existsSync(regular) && fs.existsSync(bold)) return { name: family, regular, bold };
+  }
+  return FALLBACK;
+}
+
+const FONT = pickFont();
+
+/** Знак рубля есть далеко не в каждом шрифте (в Mazzard его нет) — иначе «руб.». */
+function currencySign(file: string): string {
+  try {
+    const f = fontkit.openSync(file) as any;
+    return f.hasGlyphForCodePoint?.(0x20bd) ? '₽' : 'руб.';
+  } catch {
+    return '₽';
+  }
+}
+const RUB = currencySign(FONT.regular);
+console.log(`PDF-прайс: шрифт ${FONT.name}, знак валюты «${RUB}»`);
 
 // A4 портрет: 595.28 × 841.89 pt
 const PAGE = { w: 595.28, h: 841.89 };
@@ -21,7 +66,7 @@ const MUTED = '#616a7a';
 const LINE = '#dde1e9';
 const ACCENT = '#2a78d6';
 
-const money = (v: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v) + ' ₽';
+const money = (v: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v) + ' ' + RUB;
 const num = (v: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
 
 /* ============================================================================
@@ -280,8 +325,8 @@ export async function writeScreensPdf(res: Response, tenantId: number, screenIds
   const settings = db.prepare('SELECT legal_name FROM company_settings WHERE tenant_id = ?').get(tenantId) as any;
 
   const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: false, bufferPages: false });
-  doc.registerFont('ru', FONT_REGULAR);
-  doc.registerFont('ru-b', FONT_BOLD);
+  doc.registerFont('ru', FONT.regular);
+  doc.registerFont('ru-b', FONT.bold);
   doc.info.Title = 'Прайс на размещение — LED-экраны';
   doc.info.Author = settings?.legal_name ?? 'LED-List';
   doc.pipe(res);
