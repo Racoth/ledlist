@@ -21,6 +21,8 @@ const PT_DIR = path.join(SERVER_ROOT, 'node_modules', '@expo-google-fonts', 'pt-
 const FALLBACK = {
   name: 'PT Sans',
   regular: path.join(PT_DIR, '400Regular', 'PTSans_400Regular.ttf'),
+  // у PT Sans нет промежуточного веса — акцент даёт bold
+  medium: path.join(PT_DIR, '700Bold', 'PTSans_700Bold.ttf'),
   bold: path.join(PT_DIR, '700Bold', 'PTSans_700Bold.ttf'),
 };
 
@@ -37,7 +39,9 @@ function pickFont() {
   for (const dir of dirs) {
     const regular = path.join(dir, `${family}-Regular.ttf`);
     const bold = path.join(dir, `${family}-Bold.ttf`);
-    if (fs.existsSync(regular) && fs.existsSync(bold)) return { name: family, regular, bold };
+    if (!fs.existsSync(regular) || !fs.existsSync(bold)) continue;
+    const mid = path.join(dir, `${family}-Medium.ttf`);
+    return { name: family, regular, medium: fs.existsSync(mid) ? mid : bold, bold };
   }
   return FALLBACK;
 }
@@ -161,7 +165,7 @@ function label(doc: PDFKit.PDFDocument, text: string, x: number, y: number) {
 
 function specRow(doc: PDFKit.PDFDocument, k: string, v: string, x: number, y: number, w: number) {
   doc.font('ru').fontSize(9.5).fillColor(MUTED).text(k, x, y, { width: w * 0.45 });
-  doc.font('ru-b').fontSize(9.5).fillColor(INK).text(v, x + w * 0.45, y, { width: w * 0.55 });
+  doc.font('ru-m').fontSize(9.5).fillColor(INK).text(v, x + w * 0.45, y, { width: w * 0.55 });
   doc.moveTo(x, y + 15).lineTo(x + w, y + 15).lineWidth(0.5).stroke(LINE);
 }
 
@@ -183,11 +187,25 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   const titleH = doc.heightOfString(s.name ?? '', { width: titleW });
 
   if (s.side) {
+    // Слово и буква одного кегля и на одной базовой линии: рисуем двумя
+    // вызовами с одинаковым y и размером, а не через continued со сменой кегля.
     const bx = M + CONTENT_W - badgeW;
-    doc.roundedRect(bx, y - 2, badgeW, 24, 4).fill('#eef3fb');
-    doc.font('ru').fontSize(7.5).fillColor(MUTED)
-      .text('СТОРОНА', bx + 12, y + 6, { characterSpacing: 0.6, continued: true });
-    doc.font('ru-b').fontSize(9).fillColor(ACCENT).text(`  ${s.side}`);
+    const boxY = y - 2, boxH = 24, size = 8.5, gap = 7;
+    doc.roundedRect(bx, boxY, badgeW, boxH, 4).fill('#eef3fb');
+
+    const word = 'СТОРОНА';
+    const letter = String(s.side);
+    doc.font('ru').fontSize(size);
+    const wordW = doc.widthOfString(word, { characterSpacing: 0.6 });
+    doc.font('ru-m').fontSize(size);
+    const letterW = doc.widthOfString(letter);
+    const startX = bx + (badgeW - (wordW + gap + letterW)) / 2;
+    const textY = boxY + (boxH - size * 1.18) / 2;
+
+    doc.font('ru').fontSize(size).fillColor(MUTED)
+      .text(word, startX, textY, { characterSpacing: 0.6, lineBreak: false });
+    doc.font('ru-m').fontSize(size).fillColor(ACCENT)
+      .text(letter, startX + wordW + gap, textY, { lineBreak: false });
   }
   y += titleH + 3;
 
@@ -326,6 +344,7 @@ export async function writeScreensPdf(res: Response, tenantId: number, screenIds
 
   const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: false, bufferPages: false });
   doc.registerFont('ru', FONT.regular);
+  doc.registerFont('ru-m', FONT.medium);
   doc.registerFont('ru-b', FONT.bold);
   doc.info.Title = 'Прайс на размещение — LED-экраны';
   doc.info.Author = settings?.legal_name ?? 'LED-List';
