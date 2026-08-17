@@ -131,22 +131,27 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   doc.moveTo(M, y).lineTo(M + CONTENT_W, y).lineWidth(0.7).stroke(LINE);
   y += 18;
 
-  // Код + сторона
-  doc.font('ru-b').fontSize(24).fillColor(INK).text(s.code, M, y);
-  if (s.side) {
-    const w = 54;
-    doc.roundedRect(M + CONTENT_W - w, y + 2, w, 26, 4).fill('#eef3fb');
-    doc.font('ru').fontSize(7.5).fillColor(MUTED).text('СТОРОНА', M + CONTENT_W - w, y + 6, { width: w, align: 'center' });
-    doc.font('ru-b').fontSize(12).fillColor(ACCENT).text(String(s.side), M + CONTENT_W - w, y + 15, { width: w, align: 'center' });
-  }
-  y += 32;
+  // Название крупно, код — подписью под ним, сторона — плашкой справа
+  const badgeW = 88;
+  const titleW = CONTENT_W - badgeW - 16;
+  doc.font('ru-b').fontSize(16).fillColor(INK).text(s.name ?? '', M, y, { width: titleW });
+  const titleH = doc.heightOfString(s.name ?? '', { width: titleW });
 
-  doc.font('ru-b').fontSize(14).fillColor(INK).text(s.name ?? '', M, y, { width: CONTENT_W - 70 });
-  y += doc.heightOfString(s.name ?? '', { width: CONTENT_W - 70 }) + 4;
+  if (s.side) {
+    const bx = M + CONTENT_W - badgeW;
+    doc.roundedRect(bx, y - 2, badgeW, 24, 4).fill('#eef3fb');
+    doc.font('ru').fontSize(7.5).fillColor(MUTED)
+      .text('СТОРОНА', bx + 12, y + 6, { characterSpacing: 0.6, continued: true });
+    doc.font('ru-b').fontSize(9).fillColor(ACCENT).text(`  ${s.side}`);
+  }
+  y += titleH + 3;
+
+  doc.font('ru').fontSize(9.5).fillColor(MUTED).text(s.code, M, y, { width: titleW });
+  y += 26;
 
   const place = [s.city_name ? `г. ${s.city_name}` : null, s.address].filter(Boolean).join(', ');
-  doc.font('ru').fontSize(11).fillColor(MUTED).text(place, M, y, { width: CONTENT_W });
-  y += doc.heightOfString(place, { width: CONTENT_W }) + 18;
+  doc.font('ru').fontSize(11).fillColor(INK).text(place, M, y, { width: CONTENT_W });
+  y += doc.heightOfString(place, { width: CONTENT_W }) + 20;
 
   // Две колонки: характеристики | цена
   const colW = (CONTENT_W - 20) / 2;
@@ -157,27 +162,20 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   const specs: [string, string][] = [
     ['Размер', s.width_m ? `${s.width_m} × ${s.height_m} м` : '—'],
     ['Разрешение', s.res_w ? `${s.res_w} × ${s.res_h} px` : '—'],
-    ['Шаг пикселя', s.pixel_pitch ?? '—'],
     ['Тип', s.type_name ?? '—'],
-    ['Ориентация', s.orientation === 'vertical' ? 'Вертикальная' : 'Горизонтальная'],
-    ['Яркость', s.brightness ? `${num(s.brightness)} нит` : '—'],
   ];
-  for (const [k, v] of specs) { specRow(doc, k, v, M, ry, colW); ry += 21; }
+  for (const [k, v] of specs) { specRow(doc, k, v, M, ry, colW); ry += 25; }
 
   // Блок ротации
-  ry += 6;
+  ry += 8;
   label(doc, 'Блок ротации', M, ry);
   ry += 14;
   const plays = naturalPlaysPerDay(s.work_from, s.work_to, s.loop_duration_sec);
-  const load = loopLoad(s.id, new Date().toISOString().slice(0, 10),
-    new Date(Date.now() + 29 * 86400000).toISOString().slice(0, 10));
   const blockSpecs: [string, string][] = [
     ['Длина блока', `${s.loop_duration_sec} сек`],
-    ['Часы работы', `${s.work_from}–${s.work_to}`],
-    ['Выходов в сутки', `≈ ${num(plays)}`],
-    ['Свободно сейчас', load ? `${load.free_sec} из ${s.loop_duration_sec} сек` : '—'],
+    ['Выходов в месяц', `≈ ${num(plays * 30)}`],
   ];
-  for (const [k, v] of blockSpecs) { specRow(doc, k, v, M, ry, colW); ry += 21; }
+  for (const [k, v] of blockSpecs) { specRow(doc, k, v, M, ry, colW); ry += 25; }
 
   // Цена — правая колонка
   const px = M + colW + 20;
@@ -205,57 +203,60 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   // Прайс по длительностям
   label(doc, 'Другие длительности', px, py);
   py += 14;
-  for (const d of [5, 15, 20, 30]) {
+  for (const d of [5, 15]) {
     const c = calcPrice({
       screen_id: s.id, duration_sec: d,
       date_from: new Date().toISOString().slice(0, 10),
       date_to: new Date(Date.now() + 29 * 86400000).toISOString().slice(0, 10),
     });
     specRow(doc, `${d} сек / 30 дней`, money(c?.total ?? 0), px, py, colW);
-    py += 21;
+    py += 25;
   }
 
-  // Карта и фото — во всю ширину, растянуты до подвала
-  y = Math.max(ry, py) + 18;
-  const mediaY0 = y + 13;
-  const mediaH = Math.max(150, PAGE.h - M - 26 - mediaY0);
-
+  // Фото и карта — во всю ширину, друг под другом, поделив остаток страницы
   const photo = db.prepare(`
     SELECT stored_name, mime FROM screen_photos
     WHERE screen_id = ? AND mime IN ('image/jpeg','image/png')
     ORDER BY sort_order, id LIMIT 1
   `).get(s.id) as { stored_name: string; mime: string } | undefined;
 
-  const halfW = (CONTENT_W - 16) / 2;
-  label(doc, 'Расположение', M, y);
-  label(doc, photo ? 'Фотография' : 'Фотография — не загружена', M + halfW + 16, y);
-  const mediaY = mediaY0;
+  const LABEL_H = 13;
+  const GAP = 14;
+  const mediaTop = Math.max(ry, py) + 14;
+  const boxH = Math.max(130, (PAGE.h - M - 20 - mediaTop - LABEL_H * 2 - GAP) / 2);
 
-  if (s.lat != null && s.lng != null) {
-    await drawMap(doc, s.lat, s.lng, { x: M, y: mediaY, w: halfW, h: mediaH });
-  } else {
-    doc.rect(M, mediaY, halfW, mediaH).fill('#f2f4f8');
-    doc.fillColor(MUTED).font('ru').fontSize(9)
-      .text('Координаты не указаны', M, mediaY + mediaH / 2 - 5, { width: halfW, align: 'center' });
-    doc.rect(M, mediaY, halfW, mediaH).lineWidth(0.7).stroke(LINE);
-  }
-
-  const px2 = M + halfW + 16;
+  // Фотография — сверху
+  label(doc, photo ? 'Фотография' : 'Фотография — не загружена', M, mediaTop);
+  const photoY = mediaTop + LABEL_H;
   if (photo) {
     try {
-      doc.save().rect(px2, mediaY, halfW, mediaH).clip();
-      doc.image(path.join(UPLOADS_DIR, photo.stored_name), px2, mediaY, { cover: [halfW, mediaH], align: 'center', valign: 'center' });
+      doc.save().rect(M, photoY, CONTENT_W, boxH).clip();
+      doc.image(path.join(UPLOADS_DIR, photo.stored_name), M, photoY,
+        { cover: [CONTENT_W, boxH], align: 'center', valign: 'center' });
       doc.restore();
     } catch {
       doc.restore();
-      doc.rect(px2, mediaY, halfW, mediaH).fill('#f2f4f8');
+      doc.rect(M, photoY, CONTENT_W, boxH).fill('#f2f4f8');
     }
   } else {
-    doc.rect(px2, mediaY, halfW, mediaH).fill('#f2f4f8');
+    doc.rect(M, photoY, CONTENT_W, boxH).fill('#f2f4f8');
     doc.fillColor(MUTED).font('ru').fontSize(9)
-      .text('Фото не загружено', px2, mediaY + mediaH / 2 - 5, { width: halfW, align: 'center' });
+      .text('Фото не загружено', M, photoY + boxH / 2 - 5, { width: CONTENT_W, align: 'center' });
   }
-  doc.rect(px2, mediaY, halfW, mediaH).lineWidth(0.7).stroke(LINE);
+  doc.rect(M, photoY, CONTENT_W, boxH).lineWidth(0.7).stroke(LINE);
+
+  // Карта — под фотографией
+  const mapLabelY = photoY + boxH + GAP;
+  label(doc, 'Расположение', M, mapLabelY);
+  const mapY = mapLabelY + LABEL_H;
+  if (s.lat != null && s.lng != null) {
+    await drawMap(doc, s.lat, s.lng, { x: M, y: mapY, w: CONTENT_W, h: boxH });
+  } else {
+    doc.rect(M, mapY, CONTENT_W, boxH).fill('#f2f4f8');
+    doc.fillColor(MUTED).font('ru').fontSize(9)
+      .text('Координаты не указаны', M, mapY + boxH / 2 - 5, { width: CONTENT_W, align: 'center' });
+    doc.rect(M, mapY, CONTENT_W, boxH).lineWidth(0.7).stroke(LINE);
+  }
 
   // Подвал
   const fy = PAGE.h - M + 6;
