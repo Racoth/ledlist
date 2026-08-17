@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { db, hashPassword, UPLOADS_DIR } from './db.js';
 import { login, requireAuth, requireRole, tenantOf } from './auth.js';
 import { loopLoad, checkCapacity, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
+import { writeScreensPdf } from './pdf.js';
 
 export const api = Router();
 
@@ -646,6 +647,17 @@ api.post('/screens/export', async (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="export.xlsx"');
   await wb.xlsx.write(res);
   res.end();
+});
+
+// Прайс выбранных экранов в PDF: страница A4 на экран
+api.post('/screens/export-pdf', async (req, res) => {
+  const t = tenantOf(req);
+  const ids = Array.isArray(req.body?.screen_ids) && req.body.screen_ids.length
+    ? req.body.screen_ids.map(Number) : null;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="price.pdf"');
+  const written = await writeScreensPdf(res, t, ids);
+  if (written === null && !res.headersSent) res.status(400).json({ error: 'Нет экранов для прайса' });
 });
 
 // ---------- Фотографии экрана ----------

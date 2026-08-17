@@ -76,6 +76,7 @@ export default function Screens() {
   const [addClientOpen, setAddClientOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [visibleCols, setVisibleCols] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem('screens_cols') ?? 'null') ??
     ['size', 'resolution', 'pitch', 'type_name', 'loop', 'price', 'owner_name']);
@@ -123,6 +124,16 @@ export default function Screens() {
       moneyTotal, moneyUsed,
     };
   }, [filtered]);
+
+  // Прайс в PDF: отмеченные экраны, иначе вся текущая выборка
+  async function exportPdf() {
+    setPdfBusy(true); setError('');
+    try {
+      const list = selectedIds.length > 0 ? selectedIds : filtered.map((s) => s.id);
+      await downloadPost('/screens/export-pdf', { screen_ids: list },
+        `Прайс LED-экранов - ${fmtDate(todayISO())}.pdf`);
+    } catch (e: any) { setError(e.message); } finally { setPdfBusy(false); }
+  }
 
   const columns: Column<Screen>[] = [
     { key: 'code', title: 'Код', sortValue: (s) => s.code, render: (s) => (
@@ -204,6 +215,10 @@ export default function Screens() {
           <button className="btn secondary" onClick={() => setExportOpen(true)} disabled={filtered.length === 0}>
             <Icon name="upload" size={14} /> Экспорт в Excel
             {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
+          </button>
+          <button className="btn secondary" onClick={exportPdf} disabled={filtered.length === 0 || pdfBusy}>
+            <Icon name="list" size={14} /> {pdfBusy ? 'Готовим прайс…' : 'Прайс PDF'}
+            {selectedIds.length > 0 && !pdfBusy && <span className="num">{selectedIds.length}</span>}
           </button>
           <button className="btn" onClick={() => setAddClientOpen(true)}>
             <Icon name="users" size={14} /> Добавить клиента
