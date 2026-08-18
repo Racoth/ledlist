@@ -76,6 +76,7 @@ export default function Screens() {
   const [addClientOpen, setAddClientOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [visibleCols, setVisibleCols] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem('screens_cols') ?? 'null') ??
@@ -126,12 +127,13 @@ export default function Screens() {
   }, [filtered]);
 
   // Прайс в PDF: отмеченные экраны, иначе вся текущая выборка
-  async function exportPdf() {
+  async function exportPdf(summary: boolean) {
     setPdfBusy(true); setError('');
     try {
       const list = selectedIds.length > 0 ? selectedIds : filtered.map((s) => s.id);
-      await downloadPost('/screens/export-pdf', { screen_ids: list },
+      await downloadPost('/screens/export-pdf', { screen_ids: list, summary },
         `Прайс LED-экранов - ${fmtDate(todayISO())}.pdf`);
+      setPdfOpen(false);
     } catch (e: any) { setError(e.message); } finally { setPdfBusy(false); }
   }
 
@@ -216,9 +218,9 @@ export default function Screens() {
             <Icon name="upload" size={14} /> Экспорт в Excel
             {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
           </button>
-          <button className="btn secondary" onClick={exportPdf} disabled={filtered.length === 0 || pdfBusy}>
-            <Icon name="list" size={14} /> {pdfBusy ? 'Готовим прайс…' : 'Прайс PDF'}
-            {selectedIds.length > 0 && !pdfBusy && <span className="num">{selectedIds.length}</span>}
+          <button className="btn secondary" onClick={() => setPdfOpen(true)} disabled={filtered.length === 0}>
+            <Icon name="list" size={14} /> Прайс PDF
+            {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
           </button>
           <button className="btn" onClick={() => setAddClientOpen(true)}>
             <Icon name="users" size={14} /> Добавить клиента
@@ -298,6 +300,12 @@ export default function Screens() {
         <ExportModal
           screens={selectedIds.length > 0 ? filtered.filter((s) => selectedIds.includes(s.id)) : filtered}
           onClose={() => setExportOpen(false)} />
+      )}
+      {pdfOpen && (
+        <PdfModal
+          screens={selectedIds.length > 0 ? filtered.filter((s) => selectedIds.includes(s.id)) : filtered}
+          busy={pdfBusy} error={error}
+          onExport={exportPdf} onClose={() => setPdfOpen(false)} />
       )}
       {addClientOpen && (
         <AddClientModal screens={rows} onClose={() => setAddClientOpen(false)}
@@ -526,6 +534,41 @@ const EXPORT_COLUMNS: { key: string; label: string; always?: boolean }[] = [
 ];
 
 const DEFAULT_EXPORT_COLS = ['code', 'name', 'side', 'city', 'address', 'type', 'size', 'loop', 'price', 'owner', 'status'];
+
+// ---------- Прайс в PDF ----------
+function PdfModal(props: {
+  screens: Screen[]; busy: boolean; error: string;
+  onExport: (summary: boolean) => void; onClose: () => void;
+}) {
+  const [summary, setSummary] = useState(true);
+  const pages = props.screens.length + (summary ? 1 : 0);
+
+  return (
+    <Modal title="Прайс в PDF"
+      subtitle={`${props.screens.length} ${plural(props.screens.length, ['экран', 'экрана', 'экранов'])} · страница A4 на каждый`}
+      onClose={props.onClose}
+      footer={<>
+        <button className="btn secondary" onClick={props.onClose}>Отмена</button>
+        <button className="btn" onClick={() => props.onExport(summary)} disabled={props.busy}>
+          {props.busy ? 'Готовим прайс…' : 'Скачать прайс'}
+        </button>
+      </>}>
+      {props.error && <Alert tone="error">{props.error}</Alert>}
+
+      <label className="check-row">
+        <input type="checkbox" checked={summary} onChange={(e) => setSummary(e.target.checked)} />
+        <span>
+          Закрывающая страница со сводкой
+          <span className="hint">Перечень выбранных экранов, цена ролика 10 секунд по каждому и итог за 30 дней</span>
+        </span>
+      </label>
+
+      <p className="hint" style={{ marginTop: 'var(--sp-3)' }}>
+        В файле будет {pages} {plural(pages, ['страница', 'страницы', 'страниц'])}.
+      </p>
+    </Modal>
+  );
+}
 
 function ExportModal(props: { screens: Screen[]; onClose: () => void }) {
   const today = new Date();

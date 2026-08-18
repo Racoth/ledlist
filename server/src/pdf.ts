@@ -170,6 +170,32 @@ function label(doc: PDFKit.PDFDocument, text: string, x: number, y: number) {
   doc.font('ru-b').fontSize(7.5).fillColor(MUTED).text(text.toUpperCase(), x, y, { characterSpacing: 0.6 });
 }
 
+/** Шапка страницы: компания слева, дата справа, линия под ними. Возвращает новый y. */
+function pageHeader(doc: PDFKit.PDFDocument, company: string): number {
+  let y = M;
+  doc.font('ru').fontSize(8).fillColor(MUTED)
+    .text(company || 'Прайс на размещение', M, y, { width: CONTENT_W });
+  doc.text(`Действует на ${new Date().toLocaleDateString('ru-RU')}`, M, y, { width: CONTENT_W, align: 'right' });
+  y += 16;
+  doc.moveTo(M, y).lineTo(M + CONTENT_W, y).lineWidth(0.7).stroke(LINE);
+  return y + 18;
+}
+
+function pageFooter(doc: PDFKit.PDFDocument, left: string, right: string) {
+  const fy = PAGE.h - M + 6;
+  doc.font('ru').fontSize(7.5).fillColor(MUTED)
+    .text(left, M, fy, { width: CONTENT_W })
+    .text(right, M, fy, { width: CONTENT_W, align: 'right' });
+}
+
+/** Цена ролика 10 сек за 30 дней — та же цифра, что крупно на странице экрана. */
+function price10(s: any): number {
+  const from = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 29 * 86400000).toISOString().slice(0, 10);
+  const calc = calcPrice({ screen_id: s.id, duration_sec: 10, date_from: from, date_to: to });
+  return calc?.total ?? s.price_per_sec_month * 10;
+}
+
 function specRow(doc: PDFKit.PDFDocument, k: string, v: string, x: number, y: number, w: number) {
   doc.font('ru').fontSize(9.5).fillColor(MUTED).text(k, x, y, { width: w * 0.45 });
   doc.font('ru-m').fontSize(9.5).fillColor(INK).text(v, x + w * 0.45, y, { width: w * 0.55 });
@@ -177,15 +203,7 @@ function specRow(doc: PDFKit.PDFDocument, k: string, v: string, x: number, y: nu
 }
 
 async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
-  let y = M;
-
-  // Шапка
-  doc.font('ru').fontSize(8).fillColor(MUTED)
-    .text(company || 'Прайс на размещение', M, y, { width: CONTENT_W });
-  doc.text(`Действует на ${new Date().toLocaleDateString('ru-RU')}`, M, y, { width: CONTENT_W, align: 'right' });
-  y += 16;
-  doc.moveTo(M, y).lineTo(M + CONTENT_W, y).lineWidth(0.7).stroke(LINE);
-  y += 18;
+  let y = pageHeader(doc, company);
 
   // Название крупно, код — подписью под ним, сторона — плашкой справа
   const badgeW = 88;
@@ -328,15 +346,110 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
     doc.rect(M, mapY, CONTENT_W, boxH).lineWidth(0.7).stroke(LINE);
   }
 
-  // Подвал
-  const fy = PAGE.h - M + 6;
-  doc.font('ru').fontSize(7.5).fillColor(MUTED)
-    .text(`${s.code}${s.side ? ` · сторона ${s.side}` : ''}`, M, fy, { width: CONTENT_W })
-    .text('Данные о свободной ёмкости актуальны на дату формирования', M, fy, { width: CONTENT_W, align: 'right' });
+  pageFooter(doc, `${s.code}${s.side ? ` · сторона ${s.side}` : ''}`,
+    'Данные о свободной ёмкости актуальны на дату формирования');
 }
 
-/** Прайс выбранных экранов: по странице A4 на экран. */
-export async function writeScreensPdf(res: Response, tenantId: number, screenIds: number[] | null) {
+/* ============================================================================
+   Закрывающая страница: перечень подборки с ценами и итогом
+   ========================================================================== */
+const SUM_COLS = [
+  { key: 'n',     title: '№',        w: 24,  align: 'left' as const },
+  { key: 'code',  title: 'Код',      w: 104, align: 'left' as const },
+  { key: 'place', title: 'Экран и адрес', w: 206, align: 'left' as const },
+  { key: 'side',  title: 'Сторона',  w: 50,  align: 'center' as const },
+  { key: 'loop',  title: 'Блок',     w: 44,  align: 'center' as const },
+  { key: 'price', title: 'Цена, 30 дней', w: 83, align: 'right' as const },
+];
+
+function sumTableHead(doc: PDFKit.PDFDocument, y: number): number {
+  let x = M;
+  for (const c of SUM_COLS) {
+    doc.font('ru-b').fontSize(7.5).fillColor(MUTED)
+      .text(c.title.toUpperCase(), x, y, { width: c.w, align: c.align, characterSpacing: 0.5 });
+    x += c.w;
+  }
+  const ly = y + 13;
+  doc.moveTo(M, ly).lineTo(M + CONTENT_W, ly).lineWidth(0.7).stroke(LINE);
+  return ly + 8;
+}
+
+function summaryPages(doc: PDFKit.PDFDocument, screens: any[], company: string) {
+  const total = screens.reduce((a, s) => a + price10(s), 0);
+  const BOTTOM = PAGE.h - M - 122;         // оставляем место под итог и сноску
+
+  doc.addPage({ size: 'A4', margin: 0 });
+  let y = pageHeader(doc, company);
+
+  doc.font('ru-b').fontSize(16).fillColor(INK).text('Сводка по подборке', M, y);
+  y += 20;
+  doc.font('ru').fontSize(9.5).fillColor(MUTED).text(
+    `${screens.length} ${plural(screens.length, ['экран', 'экрана', 'экранов'])} · цены за ролик 10 секунд на 30 дней`,
+    M, y, { width: CONTENT_W });
+  y += 18;
+  y = sumTableHead(doc, y);
+
+  screens.forEach((s, i) => {
+    if (y > BOTTOM) {                      // перенос на следующий лист
+      pageFooter(doc, 'Сводка по подборке', 'продолжение на следующей странице');
+      doc.addPage({ size: 'A4', margin: 0 });
+      y = sumTableHead(doc, pageHeader(doc, company));
+    }
+    const place = [s.city_name ? `г. ${s.city_name}` : null, s.address].filter(Boolean).join(', ');
+    const cells: Record<string, string> = {
+      n: String(i + 1),
+      code: s.code,
+      place,
+      side: s.side ?? '—',
+      loop: `${Math.round(s.loop_duration_sec / 60)} мин`,
+      price: money(price10(s)),
+    };
+    const placeCol = SUM_COLS.find((c) => c.key === 'place')!;
+    doc.font('ru').fontSize(9);
+    const rowH = Math.max(16, doc.heightOfString(place, { width: placeCol.w, lineGap: 1 }) + 4);
+
+    let x = M;
+    for (const c of SUM_COLS) {
+      const bold = c.key === 'price' || c.key === 'code';
+      doc.font(bold ? 'ru-m' : 'ru').fontSize(9)
+        .fillColor(c.key === 'place' ? MUTED : INK)
+        .text(cells[c.key], x, y, { width: c.w, align: c.align, lineGap: 1 });
+      x += c.w;
+    }
+    y += rowH;
+    doc.moveTo(M, y - 4).lineTo(M + CONTENT_W, y - 4).lineWidth(0.4).stroke('#eef1f5');
+  });
+
+  // Итог
+  y += 10;
+  doc.roundedRect(M, y, CONTENT_W, 46, 6).fill('#f6f8fb');
+  doc.font('ru').fontSize(9.5).fillColor(MUTED)
+    .text('Итого за размещение на 30 дней', M + 16, y + 19);
+  doc.font('ru-b').fontSize(17).fillColor(INK)
+    .text(money(total), M + 16, y + 14, { width: CONTENT_W - 32, align: 'right' });
+  y += 58;
+
+  doc.font('ru').fontSize(8).fillColor(MUTED).text(
+    'Цены указаны за ролик 10 секунд на 30 дней и включают налог, если он предусмотрен режимом экрана. ' +
+    'Скидки и коэффициенты тайм-слотов не учтены; предложение не является публичной офертой.',
+    M, y, { width: CONTENT_W, lineGap: 2 });
+
+  pageFooter(doc, 'Сводка по подборке', `${screens.length} ${plural(screens.length, ['позиция', 'позиции', 'позиций'])} · ${money(total)}`);
+}
+
+function plural(n: number, forms: [string, string, string]) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+
+/** Прайс выбранных экранов: по странице A4 на экран, в конце — сводка (по желанию). */
+export async function writeScreensPdf(
+  res: Response, tenantId: number, screenIds: number[] | null,
+  opts: { summary?: boolean } = {},
+) {
   const rows = db.prepare(`
     SELECT s.*, c.name AS city_name, c.region, st.name AS type_name
     FROM screens s
@@ -357,10 +470,13 @@ export async function writeScreensPdf(res: Response, tenantId: number, screenIds
   doc.info.Author = settings?.legal_name ?? 'LED-List';
   doc.pipe(res);
 
+  const company = settings?.legal_name ?? '';
   for (const s of screens) {
     doc.addPage({ size: 'A4', margin: 0 });
-    await screenPage(doc, s, settings?.legal_name ?? '');
+    await screenPage(doc, s, company);
   }
+  if (opts.summary !== false) summaryPages(doc, screens, company);
+
   doc.end();
   return screens.length;
 }

@@ -656,7 +656,7 @@ api.post('/screens/export-pdf', async (req, res) => {
     ? req.body.screen_ids.map(Number) : null;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="price.pdf"');
-  const written = await writeScreensPdf(res, t, ids);
+  const written = await writeScreensPdf(res, t, ids, { summary: req.body?.summary !== false });
   if (written === null && !res.headersSent) res.status(400).json({ error: 'Нет экранов для прайса' });
 });
 
