@@ -70,8 +70,15 @@ const MUTED = '#616a7a';
 const LINE = '#dde1e9';
 const ACCENT = '#2a78d6';
 
-const money = (v: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v) + ' ' + RUB;
-const num = (v: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
+// Intl разделяет разряды неразрывным пробелом; в подмножестве шрифта он может
+// не иметь Unicode-соответствия, и текст из PDF копируется с мусором — берём обычный.
+const groups = (v: number, digits = 0) =>
+  new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(v).replace(/[  ]/g, ' ');
+
+const money = (v: number) => `${groups(v)} ${RUB}`;
+const num = (v: number) => groups(v);
+/** Размер по-русски: 6,4 × 13,4 м, а не 6.4 × 13.4 */
+const dim = (v: number) => groups(v, 2);
 
 /* ============================================================================
    Карта: собираем из тайлов OpenStreetMap прямо в PDF.
@@ -223,7 +230,7 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   label(doc, 'Характеристики экрана', M, y);
   let ry = y + 14;
   const specs: [string, string][] = [
-    ['Размер', s.width_m ? `${s.width_m} × ${s.height_m} м` : '—'],
+    ['Размер', s.width_m ? `${dim(s.width_m)} × ${dim(s.height_m)} м` : '—'],
     ['Разрешение', s.res_w ? `${s.res_w} × ${s.res_h} px` : '—'],
     ['Тип', s.type_name ?? '—'],
   ];
