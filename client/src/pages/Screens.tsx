@@ -245,7 +245,7 @@ export default function Screens() {
         <div className="scard"><div className="l">Экранов в выборке</div><div className="v">{filtered.length} <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>из {rows.length}</span></div></div>
         <div className="scard" title="Продано секунд от суммарной ёмкости блоков всех экранов выборки">
           <div className="l">Заполнено</div>
-          <div className="v">{summary.usedPct}% <span className="scard-sub">{summary.totalSec - summary.freeSec} из {summary.totalSec} сек</span></div>
+          <div className="v">{summary.usedPct}%<span className="scard-sub">{summary.totalSec - summary.freeSec} из {summary.totalSec} сек</span></div>
         </div>
         <div className="scard" title="Свободные секунды в блоках экранов выборки">
           <div className="l">Свободно секунд</div>
@@ -253,7 +253,7 @@ export default function Screens() {
         </div>
         <div className="scard is-money" title="Слева — сумма за уже занятые секунды, справа — полная стоимость всех секунд блоков выборки при размещении на 30 дней">
           <div className="l">Продано из потенциала</div>
-          <div className="v">{fmtNum(summary.moneyUsed)} <span className="scard-sub">из {fmtMoney(summary.moneyTotal)}</span></div>
+          <div className="v">{fmtNum(summary.moneyUsed)}<span className="scard-sub">из {fmtMoney(summary.moneyTotal)}</span></div>
         </div>
       </div>
 
