@@ -369,6 +369,7 @@ export function DataTable<T extends { id: number }>(props: {
                 <th
                   key={c.key}
                   scope="col"
+                  className={'col-' + c.key}
                   aria-sort={active ? (sortDir === 1 ? 'ascending' : 'descending') : undefined}
                 >
                   {sortable ? (
@@ -425,7 +426,11 @@ export function DataTable<T extends { id: number }>(props: {
                   />
                 </td>
               )}
-              {cols.map((c) => <td key={c.key}>{c.render ? c.render(row) : (row as any)[c.key] ?? '—'}</td>)}
+              {cols.map((c) => (
+                <td key={c.key} className={'col-' + c.key}>
+                  {c.render ? c.render(row) : (row as any)[c.key] ?? '—'}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>

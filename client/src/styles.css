@@ -398,6 +398,13 @@ table.data tr.clickable { cursor: pointer; }
   border-radius: 0 var(--r-2) var(--r-2) 0;
 }
 .table-wrap.inventory tbody tr:hover td { background: var(--surface-2); }
+/* Текстовые колонки — по левому краю: при центрировании название «плавало»
+   вслед за длиной адреса, и левые края строк не совпадали. */
+.table-wrap.inventory .col-code,
+.table-wrap.inventory .col-name { text-align: left; }
+.table-wrap.inventory thead .col-code .th-btn,
+.table-wrap.inventory thead .col-name .th-btn { justify-content: flex-start; }
+.table-wrap.inventory .col-name .screen-name { display: flex; }
 /* Полоса состояния экрана на левом торце плашки */
 .rowstate {
   position: absolute;
