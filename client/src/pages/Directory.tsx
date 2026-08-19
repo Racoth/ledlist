@@ -105,17 +105,99 @@ export function ClientsPage() {
   />;
 }
 
+/**
+ * Менеджеры — отдельная страница, а не универсальный справочник: у менеджера
+ * есть ещё и вход в систему, логин с паролем ему выдаёт администратор.
+ */
 export function ManagersPage() {
-  return <CrudPage
-    title="Менеджеры"
-    endpoint="/managers"
-    subtitle="Сотрудники отдела продаж. Кампании привязываются к менеджеру."
-    fields={[
-      { key: 'name', label: 'ФИО' },
-      { key: 'phone', label: 'Телефон' },
-      { key: 'email', label: 'Email' },
-    ]}
-  />;
+  const admin = isAdmin();
+  const [rows, setRows] = useState<any[]>([]);
+  const [edit, setEdit] = useState<any | null>(null);
+  const [error, setError] = useState('');
+
+  const load = () => get('/managers').then(setRows).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  const columns: Column<any>[] = [
+    { key: 'name', title: 'ФИО' },
+    { key: 'phone', title: 'Телефон' },
+    { key: 'email', title: 'Email' },
+    { key: 'login', title: 'Вход в систему', render: (r) => r.login
+      ? <span className="cell-stack"><b className="mono">{r.login}</b><span className="sub">пароль задан</span></span>
+      : <span className="muted">нет доступа</span> },
+    ...(admin ? [{ key: '_actions', title: '', sortable: false, render: (r: any) => (
+      <span className="actions-cell" onClick={(e) => e.stopPropagation()}>
+        <button className="btn small secondary" onClick={() => setEdit({ ...r, password: '' })}>
+          <Icon name="edit" size={13} /> Изменить
+        </button>
+        <button className="btn small ghost" aria-label={`Удалить «${r.name}»`} onClick={async () => {
+          if (!confirm(`Удалить «${r.name}»? Вход в систему будет закрыт.`)) return;
+          try { await del(`/managers/${r.id}`); load(); } catch (e: any) { setError(e.message); }
+        }}><Icon name="trash" size={14} /></button>
+      </span>
+    ) }] : []),
+  ];
+
+  async function save() {
+    setError('');
+    const body = {
+      name: edit.name, phone: edit.phone ?? null, email: edit.email ?? null,
+      login: edit.login || undefined,
+      password: edit.password || undefined,
+    };
+    try {
+      if (edit.id) await put(`/managers/${edit.id}`, body);
+      else await post('/managers', body);
+      setEdit(null); load();
+    } catch (e: any) { setError(e.message); }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <h1>Менеджеры</h1>
+        {admin && (
+          <button className="btn" onClick={() => setEdit({ name: '', phone: '', email: '', login: '', password: '' })}>
+            <Icon name="plus" size={14} /> Добавить
+          </button>
+        )}
+      </div>
+      <div className="page-sub">
+        Сотрудники отдела продаж. Кампании привязываются к менеджеру, а логин с паролем открывает ему вход в систему.
+      </div>
+      {error && <Alert tone="error">{error}</Alert>}
+      <DataTable caption="Менеджеры" columns={columns} rows={rows}
+        onRowClick={admin ? (r) => setEdit({ ...r, password: '' }) : undefined}
+        emptyText="Менеджеров пока нет" emptyHint="Нажмите «Добавить», чтобы завести первого." />
+
+      {edit && (
+        <Modal title={edit.id ? `Менеджер: ${edit.name}` : 'Новый менеджер'} onClose={() => setEdit(null)}
+          subtitle="Логин и пароль можно задать сразу или позже — без них менеджер просто числится в справочнике"
+          footer={<>
+            <button className="btn secondary" onClick={() => setEdit(null)}>Отмена</button>
+            <button className="btn" onClick={save} disabled={!edit.name?.trim()}>Сохранить</button>
+          </>}>
+          <div className="form-grid">
+            <TextInput label="ФИО" required value={edit.name} onChange={(v) => setEdit({ ...edit, name: v })} />
+            <TextInput label="Телефон" value={edit.phone} onChange={(v) => setEdit({ ...edit, phone: v })} />
+            <TextInput label="Email" type="email" value={edit.email} onChange={(v) => setEdit({ ...edit, email: v })}
+              hint="Контактный адрес для связи" />
+          </div>
+
+          <div className="export-section">
+            <span className="eyebrow">Доступ в систему</span>
+            <div className="form-grid">
+              <TextInput label="Логин" type="email" value={edit.login} onChange={(v) => setEdit({ ...edit, login: v })}
+                hint="Email, под которым менеджер входит" />
+              <TextInput label="Пароль" type="password" value={edit.password}
+                onChange={(v) => setEdit({ ...edit, password: v })}
+                hint={edit.account_id ? 'Заполните, чтобы задать новый пароль' : 'Минимум 6 символов'} />
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
 
 export function OwnersPage() {

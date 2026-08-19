@@ -2,8 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
-import { db, hashPassword, UPLOADS_DIR } from './db.js';
-import { login, requireAuth, requireRole, tenantOf } from './auth.js';
+import { db, hashPassword, verifyPassword, UPLOADS_DIR } from './db.js';
+import { issueToken, login, requireAuth, requireRole, tenantOf } from './auth.js';
 import { loopLoad, checkCapacity, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
 import { writeScreensPdf } from './pdf.js';
 
@@ -37,7 +37,6 @@ const dicts: Record<string, DictConfig> = {
   'tax-regimes': { table: 'tax_regimes', fields: ['name', 'rate'] },
   owners:       { table: 'owners', fields: ['name', 'phone', 'email', 'comment'] },
   clients:      { table: 'clients', fields: ['name', 'phone', 'email', 'address', 'contacts', 'comment'], deleteAdminOnly: true },
-  managers:     { table: 'managers', fields: ['name', 'phone', 'email', 'user_id'] },
 };
 
 for (const [route, cfg] of Object.entries(dicts)) {
@@ -59,7 +58,7 @@ for (const [route, cfg] of Object.entries(dicts)) {
       .run(...cols.map((c) => req.body[c]), req.params.id, tenantOf(req));
     res.json(db.prepare(`SELECT * FROM ${cfg.table} WHERE id = ?`).get(req.params.id));
   });
-  const delGuards = cfg.deleteAdminOnly ? [requireRole('admin', 'superadmin')] : [];
+  const delGuards = cfg.deleteAdminOnly ? [requireRole('admin')] : [];
   api.delete(`/${route}/:id`, ...delGuards, (req, res) => {
     try {
       db.prepare(`DELETE FROM ${cfg.table} WHERE id = ? AND tenant_id = ?`).run(req.params.id, tenantOf(req));
@@ -69,6 +68,135 @@ for (const [route, cfg] of Object.entries(dicts)) {
     }
   });
 }
+
+// ---------- Менеджеры и их учётные записи ----------
+// Менеджер — это и запись справочника (к ней привязаны кампании), и вход в систему.
+// Логин с паролем задаёт администратор: своей регистрации в системе нет.
+api.get('/managers', (req, res) => {
+  const rows = db.prepare(`
+    SELECT m.*, u.email AS login, u.id AS account_id
+    FROM managers m LEFT JOIN users u ON u.id = m.user_id
+    WHERE m.tenant_id = ? ORDER BY m.id
+  `).all(tenantOf(req));
+  res.json(rows);
+});
+
+function emailTaken(email: string, exceptUserId?: number | null): boolean {
+  const row = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as any;
+  return !!row && row.id !== exceptUserId;
+}
+
+const PASSWORD_MIN = 6;
+
+api.post('/managers', requireRole('admin'), (req, res) => {
+  const t = tenantOf(req);
+  const { name, phone, email, login, password } = req.body ?? {};
+  if (!name) return res.status(400).json({ error: 'Укажите ФИО менеджера' });
+  if (login && !password) return res.status(400).json({ error: 'Задайте пароль для входа' });
+  if (password && String(password).length < PASSWORD_MIN) {
+    return res.status(400).json({ error: `Пароль короче ${PASSWORD_MIN} символов` });
+  }
+  if (login && emailTaken(String(login))) {
+    return res.status(409).json({ error: 'Этот логин уже занят' });
+  }
+
+  const create = db.transaction(() => {
+    let userId: number | null = null;
+    if (login && password) {
+      userId = db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (?,?,?,?,'manager')`)
+        .run(t, String(login), hashPassword(String(password)), name).lastInsertRowid as number;
+    }
+    const id = db.prepare('INSERT INTO managers (tenant_id,user_id,name,phone,email) VALUES (?,?,?,?,?)')
+      .run(t, userId, name, phone ?? null, email ?? null).lastInsertRowid as number;
+    return id;
+  });
+  const id = create();
+  res.json(db.prepare('SELECT * FROM managers WHERE id = ?').get(id));
+});
+
+api.put('/managers/:id', requireRole('admin'), (req, res) => {
+  const t = tenantOf(req);
+  const m = db.prepare('SELECT * FROM managers WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  if (!m) return res.status(404).json({ error: 'Менеджер не найден' });
+  const { name, phone, email, login, password } = req.body ?? {};
+  if (password && String(password).length < PASSWORD_MIN) {
+    return res.status(400).json({ error: `Пароль короче ${PASSWORD_MIN} символов` });
+  }
+  if (login && emailTaken(String(login), m.user_id)) {
+    return res.status(409).json({ error: 'Этот логин уже занят' });
+  }
+  if (login && !m.user_id && !password) {
+    return res.status(400).json({ error: 'Для нового входа нужен и логин, и пароль' });
+  }
+
+  const update = db.transaction(() => {
+    let userId: number | null = m.user_id;
+    if (login && !userId) {
+      // Учётной записи ещё не было — создаём вместе с первым логином
+      userId = db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (?,?,?,?,'manager')`)
+        .run(t, String(login), hashPassword(String(password)), name ?? m.name).lastInsertRowid as number;
+    } else if (userId) {
+      if (login) db.prepare('UPDATE users SET email = ? WHERE id = ?').run(String(login), userId);
+      if (password) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(String(password)), userId);
+      if (name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, userId);
+    }
+    db.prepare('UPDATE managers SET name = ?, phone = ?, email = ?, user_id = ? WHERE id = ? AND tenant_id = ?')
+      .run(name ?? m.name, phone ?? null, email ?? null, userId, m.id, t);
+  });
+  update();
+  res.json(db.prepare('SELECT * FROM managers WHERE id = ?').get(m.id));
+});
+
+api.delete('/managers/:id', requireRole('admin'), (req, res) => {
+  const t = tenantOf(req);
+  const m = db.prepare('SELECT * FROM managers WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  if (!m) return res.json({ ok: true });
+  try {
+    // Учётная запись уходит вместе с менеджером, иначе останется живой вход в систему
+    const drop = db.transaction(() => {
+      db.prepare('DELETE FROM managers WHERE id = ? AND tenant_id = ?').run(m.id, t);
+      if (m.user_id) db.prepare('DELETE FROM users WHERE id = ?').run(m.user_id);
+    });
+    drop();
+    res.json({ ok: true });
+  } catch {
+    res.status(409).json({ error: 'На менеджера оформлены кампании — удаление запрещено' });
+  }
+});
+
+// ---------- Свой аккаунт ----------
+api.get('/account', (req, res) => {
+  const row = db.prepare('SELECT id, email, name, role FROM users WHERE id = ?').get(req.user!.id);
+  res.json(row);
+});
+
+// Смена email или пароля требует текущий пароль: сессия могла быть перехвачена.
+api.put('/account', (req, res) => {
+  const { name, email, password, current_password } = req.body ?? {};
+  const me = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as any;
+  if (!me) return res.status(404).json({ error: 'Пользователь не найден' });
+
+  const changesEmail = email && email !== me.email;
+  if ((changesEmail || password) && !verifyPassword(String(current_password ?? ''), me.password_hash)) {
+    return res.status(403).json({ error: 'Неверный текущий пароль' });
+  }
+  if (password && String(password).length < PASSWORD_MIN) {
+    return res.status(400).json({ error: `Пароль короче ${PASSWORD_MIN} символов` });
+  }
+  if (changesEmail && emailTaken(String(email), me.id)) {
+    return res.status(409).json({ error: 'Этот email уже занят' });
+  }
+
+  db.prepare('UPDATE users SET name = ?, email = ?, password_hash = ? WHERE id = ?').run(
+    name ?? me.name,
+    email ?? me.email,
+    password ? hashPassword(String(password)) : me.password_hash,
+    me.id,
+  );
+  // Имя и email лежат в токене — выдаём новый, иначе в интерфейсе останутся старые данные
+  const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(me.id) as any;
+  res.json(issueToken(fresh));
+});
 
 // ---------- Экраны ----------
 const SCREEN_FIELDS = ['code','name','side','address','city_id','lat','lng','width_m','height_m','res_w','res_h','pixel_pitch',
@@ -105,7 +233,7 @@ api.get('/screens/:id', (req, res) => {
   res.json(row);
 });
 
-api.post('/screens', requireRole('admin', 'superadmin'), (req, res) => {
+api.post('/screens', requireRole('admin'), (req, res) => {
   const cols = SCREEN_FIELDS.filter((f) => req.body[f] !== undefined);
   const info = db.prepare(
     `INSERT INTO screens (tenant_id${cols.map((c) => ',' + c).join('')}) VALUES (?${cols.map(() => ',?').join('')})`
@@ -113,7 +241,7 @@ api.post('/screens', requireRole('admin', 'superadmin'), (req, res) => {
   res.json(db.prepare('SELECT * FROM screens WHERE id = ?').get(info.lastInsertRowid));
 });
 
-api.put('/screens/:id', requireRole('admin', 'superadmin'), (req, res) => {
+api.put('/screens/:id', requireRole('admin'), (req, res) => {
   const cols = SCREEN_FIELDS.filter((f) => req.body[f] !== undefined);
   if (cols.length === 0) return res.status(400).json({ error: 'Нет полей' });
   db.prepare(`UPDATE screens SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`)
@@ -121,7 +249,7 @@ api.put('/screens/:id', requireRole('admin', 'superadmin'), (req, res) => {
   res.json(db.prepare('SELECT * FROM screens WHERE id = ?').get(req.params.id));
 });
 
-api.delete('/screens/:id', requireRole('admin', 'superadmin'), (req, res) => {
+api.delete('/screens/:id', requireRole('admin'), (req, res) => {
   const used = db.prepare('SELECT COUNT(*) c FROM ad_slots WHERE screen_id = ?').get(req.params.id) as any;
   if (used.c > 0) return res.status(409).json({ error: 'По экрану есть размещения — удаление запрещено' });
   db.prepare('DELETE FROM screens WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
@@ -421,7 +549,7 @@ api.post('/campaigns/:id/status', (req, res) => {
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(c.id));
 });
 
-api.delete('/campaigns/:id', requireRole('admin', 'superadmin'), (req, res) => {
+api.delete('/campaigns/:id', requireRole('admin'), (req, res) => {
   db.prepare('DELETE FROM payments WHERE campaign_id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
   db.prepare('DELETE FROM campaigns WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
   res.json({ ok: true });
@@ -703,7 +831,7 @@ api.get('/screens/:id/photos', (req, res) => {
   res.json(rows);
 });
 
-api.post('/screens/:id/photos', requireRole('admin', 'superadmin'), photoUpload.single('file'), (req, res) => {
+api.post('/screens/:id/photos', requireRole('admin'), photoUpload.single('file'), (req, res) => {
   const t = tenantOf(req);
   const screen = db.prepare('SELECT id FROM screens WHERE id = ? AND tenant_id = ?').get(req.params.id, t);
   if (!screen) return res.status(404).json({ error: 'Экран не найден' });
@@ -727,7 +855,7 @@ api.get('/photos/:id/file', (req, res) => {
 });
 
 // Сделать фото главным: уходит в начало списка
-api.post('/photos/:id/primary', requireRole('admin', 'superadmin'), (req, res) => {
+api.post('/photos/:id/primary', requireRole('admin'), (req, res) => {
   const t = tenantOf(req);
   const p = db.prepare('SELECT screen_id FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!p) return res.status(404).json({ error: 'Не найдено' });
@@ -737,7 +865,7 @@ api.post('/photos/:id/primary', requireRole('admin', 'superadmin'), (req, res) =
   res.json({ ok: true });
 });
 
-api.delete('/photos/:id', requireRole('admin', 'superadmin'), (req, res) => {
+api.delete('/photos/:id', requireRole('admin'), (req, res) => {
   const t = tenantOf(req);
   const p = db.prepare('SELECT stored_name FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!p) return res.status(404).json({ error: 'Не найдено' });
@@ -766,44 +894,9 @@ api.post('/payments', (req, res) => {
   res.json(db.prepare('SELECT * FROM payments WHERE id = ?').get(info.lastInsertRowid));
 });
 
-api.delete('/payments/:id', requireRole('admin', 'superadmin'), (req, res) => {
+api.delete('/payments/:id', requireRole('admin'), (req, res) => {
   db.prepare('DELETE FROM payments WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
   res.json({ ok: true });
-});
-
-// ---------- Подписки (суперадмин) ----------
-api.get('/tenants', requireRole('superadmin'), (_req, res) => {
-  const rows = db.prepare(`
-    SELECT t.*,
-      (SELECT COUNT(*) FROM screens WHERE tenant_id = t.id) AS screens_count,
-      (SELECT COUNT(*) FROM users WHERE tenant_id = t.id) AS users_count
-    FROM tenants t ORDER BY t.id
-  `).all();
-  res.json(rows);
-});
-
-api.post('/tenants', requireRole('superadmin'), (req, res) => {
-  const { name, inn, contact_email, expires_at, admin_email, admin_password } = req.body ?? {};
-  if (!name) return res.status(400).json({ error: 'Укажите название' });
-  const info = db.prepare(`INSERT INTO tenants (name, inn, contact_email, expires_at) VALUES (?,?,?,?)`)
-    .run(name, inn ?? null, contact_email ?? null, expires_at ?? null);
-  const tid = info.lastInsertRowid as number;
-  db.prepare(`INSERT INTO company_settings (tenant_id, legal_name) VALUES (?,?)`).run(tid, name);
-  if (admin_email && admin_password) {
-    db.prepare(`INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES (?,?,?,?,'admin')`)
-      .run(tid, admin_email, hashPassword(admin_password), 'Администратор');
-  }
-  res.json(db.prepare('SELECT * FROM tenants WHERE id = ?').get(tid));
-});
-
-api.put('/tenants/:id', requireRole('superadmin'), (req, res) => {
-  const fields = ['name', 'inn', 'contact_email', 'expires_at', 'active'];
-  const cols = fields.filter((f) => req.body[f] !== undefined);
-  if (cols.length) {
-    db.prepare(`UPDATE tenants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
-      .run(...cols.map((c) => req.body[c]), req.params.id);
-  }
-  res.json(db.prepare('SELECT * FROM tenants WHERE id = ?').get(req.params.id));
 });
 
 // ---------- Настройки компании ----------
@@ -811,7 +904,7 @@ api.get('/settings/company', (req, res) => {
   res.json(db.prepare('SELECT * FROM company_settings WHERE tenant_id = ?').get(tenantOf(req)) ?? {});
 });
 
-api.put('/settings/company', requireRole('admin', 'superadmin'), (req, res) => {
+api.put('/settings/company', requireRole('admin'), (req, res) => {
   const t = tenantOf(req);
   const fields = ['legal_name', 'inn', 'address', 'phone', 'email', 'reserve_days', 'columns_config'];
   const cols = fields.filter((f) => req.body[f] !== undefined);

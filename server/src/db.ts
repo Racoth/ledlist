@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('superadmin','admin','manager'))
+  role TEXT NOT NULL CHECK (role IN ('admin','manager'))
 );
 
 CREATE TABLE IF NOT EXISTS cities (
@@ -253,40 +253,35 @@ if (!screenCols.some((c) => c.name === 'price_per_sec_month')) {
     , 2)`);
 }
 
+// ---------- Учётная запись администратора системы ----------
+const ADMIN_EMAIL = 'info@novayaera.com';
+const ADMIN_NAME = 'Анзор Матаев';
+const ADMIN_PASSWORD = '123456789';
+
 // ---------- Seed ----------
 const hasUsers = db.prepare('SELECT COUNT(*) c FROM users').get() as { c: number };
 if (hasUsers.c === 0) {
   const seed = db.transaction(() => {
-    db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (NULL,?,?,?,'superadmin')`)
-      .run('admin@platform.ru', hashPassword('admin'), 'Суперадмин платформы');
-
     const t1 = db.prepare(`INSERT INTO tenants (name,inn,contact_email,registered_at,expires_at) VALUES (?,?,?,?,?)`)
-      .run('ООО «ГородМедиа»', '2013001122', 'admin@gorodmedia.ru', '2025-11-01', '2027-11-01').lastInsertRowid as number;
-    const t2 = db.prepare(`INSERT INTO tenants (name,inn,contact_email,registered_at,expires_at) VALUES (?,?,?,?,?)`)
-      .run('ООО «Экран-Юг»', '6167004455', 'info@ekran-ug.ru', '2026-02-15', '2027-02-15').lastInsertRowid as number;
+      .run('Новая Эра', '2013001122', ADMIN_EMAIL, '2025-11-01', '2027-11-01').lastInsertRowid as number;
 
     db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (?,?,?,?,'admin')`)
-      .run(t1, 'admin@gorodmedia.ru', hashPassword('admin'), 'Ахмед Дааев');
+      .run(t1, ADMIN_EMAIL, hashPassword(ADMIN_PASSWORD), ADMIN_NAME);
     const mgrUser = db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (?,?,?,?,'manager')`)
-      .run(t1, 'manager@gorodmedia.ru', hashPassword('manager'), 'Мадина Исаева').lastInsertRowid as number;
-    db.prepare(`INSERT INTO users (tenant_id,email,password_hash,name,role) VALUES (?,?,?,?,'admin')`)
-      .run(t2, 'admin@ekran-ug.ru', hashPassword('admin'), 'Сергей Волков');
+      .run(t1, 'manager@novayaera.com', hashPassword('manager'), 'Мадина Исаева').lastInsertRowid as number;
 
     db.prepare(`INSERT INTO company_settings (tenant_id,legal_name,inn,phone,email,reserve_days) VALUES (?,?,?,?,?,3)`)
-      .run(t1, 'ООО «ГородМедиа»', '2013001122', '+7 (871) 222-33-44', 'admin@gorodmedia.ru');
-    db.prepare(`INSERT INTO company_settings (tenant_id,legal_name,reserve_days) VALUES (?,?,3)`).run(t2, 'ООО «Экран-Юг»');
+      .run(t1, 'Новая Эра', '2013001122', '+7 (871) 222-33-44', ADMIN_EMAIL);
 
     const city = db.prepare(`INSERT INTO cities (tenant_id,name,region) VALUES (?,?,?)`);
     const cGrz = city.run(t1, 'Грозный', 'Чеченская Республика').lastInsertRowid as number;
     const cArg = city.run(t1, 'Аргун', 'Чеченская Республика').lastInsertRowid as number;
     const cGud = city.run(t1, 'Гудермес', 'Чеченская Республика').lastInsertRowid as number;
-    city.run(t2, 'Ростов-на-Дону', 'Ростовская область');
 
     const st = db.prepare(`INSERT INTO screen_types (tenant_id,name) VALUES (?,?)`);
     const stOut = st.run(t1, 'Уличный').lastInsertRowid as number;
     const stIn = st.run(t1, 'Внутренний').lastInsertRowid as number;
     const stMedia = st.run(t1, 'Медиафасад').lastInsertRowid as number;
-    st.run(t2, 'Уличный');
 
     const ts = db.prepare(`INSERT INTO time_slots (tenant_id,name,time_from,time_to,price_coef) VALUES (?,?,?,?,?)`);
     ts.run(t1, 'Утро', '06:00', '12:00', 0.8);
@@ -306,12 +301,12 @@ if (hasUsers.c === 0) {
     tax.run(t1, 'Без налога', 0);
 
     const own = db.prepare(`INSERT INTO owners (tenant_id,name,phone,email,comment) VALUES (?,?,?,?,?)`);
-    const o1 = own.run(t1, 'ООО «ГородМедиа» (собственные)', '+7 (871) 222-33-44', 'admin@gorodmedia.ru', null).lastInsertRowid as number;
+    const o1 = own.run(t1, 'Новая Эра (собственные)', '+7 (871) 222-33-44', ADMIN_EMAIL, null).lastInsertRowid as number;
     const o2 = own.run(t1, 'ИП Магомадов Р.С.', '+7 (928) 111-22-33', 'magomadov@mail.ru', 'Агентская схема 15%').lastInsertRowid as number;
 
     const mgr = db.prepare(`INSERT INTO managers (tenant_id,user_id,name,phone,email) VALUES (?,?,?,?,?)`);
-    const m1 = mgr.run(t1, mgrUser, 'Мадина Исаева', '+7 (928) 555-66-77', 'manager@gorodmedia.ru').lastInsertRowid as number;
-    const m2 = mgr.run(t1, null, 'Тимур Эльдаров', '+7 (928) 777-88-99', 'eldarov@gorodmedia.ru').lastInsertRowid as number;
+    const m1 = mgr.run(t1, mgrUser, 'Мадина Исаева', '+7 (928) 555-66-77', 'manager@novayaera.com').lastInsertRowid as number;
+    const m2 = mgr.run(t1, null, 'Тимур Эльдаров', '+7 (928) 777-88-99', 'eldarov@novayaera.com').lastInsertRowid as number;
 
     const cl = db.prepare(`INSERT INTO clients (tenant_id,name,phone,email,address,contacts) VALUES (?,?,?,?,?,?)`);
     const cl1 = cl.run(t1, 'ООО «Лидер-Авто»', '+7 (871) 233-44-55', 'ad@lider-avto.ru', 'г. Грозный, пр. Кадырова, 12',
@@ -353,4 +348,45 @@ if (hasUsers.c === 0) {
   });
   seed();
   console.log('База создана и наполнена демо-данными.');
+}
+
+// ---------- Миграция: уход от роли «суперадмин» ----------
+// Раньше существовала платформенная роль superadmin с разделом «Подписки».
+// Роль убрана: система работает как одна компания со своим администратором.
+// Блок идемпотентен — после первого прохода условия перестают выполняться.
+const superadmins = db.prepare("SELECT COUNT(*) c FROM users WHERE role = 'superadmin'").get() as { c: number };
+if (superadmins.c > 0) {
+  db.prepare("DELETE FROM users WHERE role = 'superadmin'").run();
+  console.log('Миграция: платформенный суперадмин удалён.');
+}
+
+// Демо-компания «Экран-Юг» из старого сида — удаляем, только если в ней нет реальных данных
+const demoTenant = db.prepare("SELECT id FROM tenants WHERE name = 'ООО «Экран-Юг»'").get() as { id: number } | undefined;
+if (demoTenant) {
+  const used = db.prepare(`
+    SELECT (SELECT COUNT(*) FROM screens WHERE tenant_id = ?)
+         + (SELECT COUNT(*) FROM campaigns WHERE tenant_id = ?) AS c
+  `).get(demoTenant.id, demoTenant.id) as { c: number };
+  if (used.c === 0) {
+    const drop = db.transaction((tid: number) => {
+      for (const t of ['company_settings', 'cities', 'screen_types', 'time_slots', 'discounts',
+                       'tax_regimes', 'owners', 'clients', 'managers', 'users']) {
+        db.prepare(`DELETE FROM ${t} WHERE tenant_id = ?`).run(tid);
+      }
+      db.prepare('DELETE FROM tenants WHERE id = ?').run(tid);
+    });
+    drop(demoTenant.id);
+    console.log('Миграция: демо-компания «Экран-Юг» удалена.');
+  } else {
+    console.log('Внимание: в компании «Экран-Юг» есть экраны или кампании — оставлена без изменений.');
+  }
+}
+
+// Демо-администратор старого сида → реальный владелец системы.
+// После переименования условие не выполняется, поэтому смена пароля в интерфейсе не откатится.
+const legacyAdmin = db.prepare("SELECT id FROM users WHERE email = 'admin@gorodmedia.ru'").get() as { id: number } | undefined;
+if (legacyAdmin) {
+  db.prepare('UPDATE users SET email = ?, name = ?, password_hash = ? WHERE id = ?')
+    .run(ADMIN_EMAIL, ADMIN_NAME, hashPassword(ADMIN_PASSWORD), legacyAdmin.id);
+  console.log(`Миграция: администратор системы — ${ADMIN_NAME} <${ADMIN_EMAIL}>.`);
 }

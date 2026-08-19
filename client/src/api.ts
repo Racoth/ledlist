@@ -3,7 +3,7 @@ export interface User {
   tenant_id: number | null;
   email: string;
   name: string;
-  role: 'superadmin' | 'admin' | 'manager';
+  role: 'admin' | 'manager';
 }
 
 let token: string | null = localStorage.getItem('token');
@@ -12,8 +12,7 @@ let currentUser: User | null = JSON.parse(localStorage.getItem('user') ?? 'null'
 export function getUser(): User | null { return currentUser; }
 /** Права администратора: полный доступ к деньгам, экранам и продажам. */
 export function isAdmin(): boolean {
-  const r = currentUser?.role;
-  return r === 'admin' || r === 'superadmin';
+  return currentUser?.role === 'admin';
 }
 export function getToken(): string | null { return token; }
 

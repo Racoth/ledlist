@@ -28,7 +28,7 @@ export default function Login() {
     try {
       const { token, user } = await post('/auth/login', { email, password });
       setAuth(token, user);
-      window.location.href = user.role === 'superadmin' ? '/tenants' : '/screens';
+      window.location.href = '/screens';
     } catch (err: any) {
       setError(err.message);
     } finally {

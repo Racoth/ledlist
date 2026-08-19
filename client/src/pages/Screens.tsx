@@ -64,7 +64,7 @@ function condMatches(s: Screen, c: FilterCond): boolean {
 export default function Screens() {
   const user = getUser()!;
   const nav = useNavigate();
-  const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+  const isAdmin = user.role === 'admin';
   const [rows, setRows] = useState<Screen[]>([]);
   const [dicts, setDicts] = useState<any>({ cities: [], types: [], owners: [], taxes: [] });
   const [period, setPeriod] = useState({ from: todayISO(), to: plusDaysISO(29) });

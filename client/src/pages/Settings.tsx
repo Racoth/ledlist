@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { get, post, put, del } from '../api';
+import { get, post, put, del, setAuth } from '../api';
 import { Modal, TextInput, Alert, Icon } from '../components/ui';
 
 interface DictField { key: string; label: string; type?: string }
@@ -28,12 +28,15 @@ export default function Settings() {
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'company'} className={`tab ${tab === 'company' ? 'active' : ''}`}
           onClick={() => setTab('company')}>Данные о компании</button>
+        <button role="tab" aria-selected={tab === 'account'} className={`tab ${tab === 'account' ? 'active' : ''}`}
+          onClick={() => setTab('account')}>Мой аккаунт</button>
         {DICTS.map((d) => (
           <button key={d.key} role="tab" aria-selected={tab === d.key} className={`tab ${tab === d.key ? 'active' : ''}`}
             onClick={() => setTab(d.key)}>{d.title}</button>
         ))}
       </div>
       {tab === 'company' && <CompanyTab />}
+      {tab === 'account' && <AccountTab />}
       {DICTS.filter((d) => d.key === tab).map((d) => <DictTab key={d.key} def={d} />)}
     </div>
   );
@@ -72,6 +75,82 @@ function CompanyTab() {
           hint="Сколько дней кампания в статусе «Бронь» удерживает ёмкость блока" />
       </div>
       <div style={{ marginTop: 14 }}><button className="btn" onClick={save}>Сохранить</button></div>
+    </div>
+  );
+}
+
+/** Свои данные для входа: имя, email-логин и пароль. */
+function AccountTab() {
+  const [form, setForm] = useState({ name: '', email: '' });
+  const [savedEmail, setSavedEmail] = useState('');   // что лежит в базе, а не в токене сессии
+  const [pw, setPw] = useState({ current: '', next: '', repeat: '' });
+  const [ok, setOk] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    get('/account')
+      .then((a) => { setForm({ name: a.name, email: a.email }); setSavedEmail(a.email); })
+      .catch((e) => setError(e.message));
+  }, []);
+
+  const emailChanged = savedEmail !== '' && form.email !== savedEmail;
+  const wantsPassword = pw.next.length > 0;
+  const needsCurrent = emailChanged || wantsPassword;
+
+  async function save() {
+    setOk(''); setError('');
+    if (!form.name.trim()) { setError('Укажите имя.'); return; }
+    if (!form.email.trim()) { setError('Укажите email — он же логин для входа.'); return; }
+    if (wantsPassword && pw.next !== pw.repeat) { setError('Пароли не совпадают.'); return; }
+    if (needsCurrent && !pw.current) { setError('Для смены email или пароля введите текущий пароль.'); return; }
+
+    setBusy(true);
+    try {
+      const r = await put('/account', {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        password: wantsPassword ? pw.next : undefined,
+        current_password: pw.current || undefined,
+      });
+      setAuth(r.token, r.user);          // имя и email лежат в токене — обновляем сессию
+      setSavedEmail(r.user.email);
+      setPw({ current: '', next: '', repeat: '' });
+      setOk('Данные аккаунта обновлены');
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel" style={{ maxWidth: 720 }}>
+      {ok && <Alert tone="ok">{ok}</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}
+      <div className="form-grid">
+        <TextInput label="Имя" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
+        <TextInput label="Email (логин)" type="email" value={form.email}
+          onChange={(v) => setForm({ ...form, email: v })} hint="Под этим адресом вы входите в систему" />
+      </div>
+
+      <div className="export-section">
+        <span className="eyebrow">Смена пароля</span>
+        <div className="form-grid">
+          <TextInput label="Новый пароль" type="password" value={pw.next}
+            onChange={(v) => setPw({ ...pw, next: v })} hint="Оставьте пустым, если менять не нужно" />
+          <TextInput label="Новый пароль ещё раз" type="password" value={pw.repeat}
+            onChange={(v) => setPw({ ...pw, repeat: v })} />
+        </div>
+      </div>
+
+      {needsCurrent && (
+        <div className="export-section">
+          <TextInput label="Текущий пароль" type="password" value={pw.current}
+            onChange={(v) => setPw({ ...pw, current: v })}
+            hint="Нужен для подтверждения смены email или пароля" />
+        </div>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        <button className="btn" onClick={save} disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить'}</button>
+      </div>
     </div>
   );
 }

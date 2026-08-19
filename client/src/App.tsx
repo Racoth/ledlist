@@ -10,7 +10,6 @@ import CampaignCard from './pages/CampaignCard';
 import Bookings from './pages/Bookings';
 import { ClientsPage, ManagersPage, OwnersPage } from './pages/Directory';
 import Payments from './pages/Payments';
-import Tenants from './pages/Tenants';
 import Settings from './pages/Settings';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -69,19 +68,18 @@ function NavMenu({ label, links }: { label: string; links: MenuLink[] }) {
 function TopBar() {
   const user = getUser();
   if (!user) return null;
-  const roleLabel = { superadmin: 'Суперадмин', admin: 'Администратор', manager: 'Менеджер' }[user.role];
+  const roleLabel = { admin: 'Администратор', manager: 'Менеджер' }[user.role];
   const initials = user.name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
 
   return (
     <header className="topbar">
       <Brand />
-      {user.role !== 'superadmin' && (
-        <nav className="nav" aria-label="Основная навигация">
-          <div className="nav-item">
-            <NavLink className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')} to="/screens">
-              Инвентарь
-            </NavLink>
-          </div>
+      <nav className="nav" aria-label="Основная навигация">
+        <div className="nav-item">
+          <NavLink className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')} to="/screens">
+            Инвентарь
+          </NavLink>
+        </div>
           <NavMenu
             label="Продажи"
             links={[
@@ -98,24 +96,14 @@ function TopBar() {
               { to: '/owners', label: 'Владельцы экранов', sub: 'Собственники конструкций' },
             ]}
           />
-          {user.role === 'admin' && (
-            <div className="nav-item">
-              <NavLink className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')} to="/settings">
-                Настройки
-              </NavLink>
-            </div>
-          )}
-        </nav>
-      )}
-      {user.role === 'superadmin' && (
-        <nav className="nav" aria-label="Основная навигация">
+        {user.role === 'admin' && (
           <div className="nav-item">
-            <NavLink className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')} to="/tenants">
-              Подписки
+            <NavLink className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')} to="/settings">
+              Настройки
             </NavLink>
           </div>
-        </nav>
-      )}
+        )}
+      </nav>
       <div className="spacer" />
       <div className="userbox">
         <span className="avatar" aria-hidden="true">{initials}</span>
@@ -132,8 +120,7 @@ function TopBar() {
 }
 
 export default function App() {
-  const user = getUser();
-  const home = user?.role === 'superadmin' ? '/tenants' : '/screens';
+  const home = '/screens';
   return (
     <BrowserRouter>
       <a className="skip-link" href="#main">К основному содержимому</a>
@@ -150,7 +137,6 @@ export default function App() {
           <Route path="/managers" element={<RequireAuth><ManagersPage /></RequireAuth>} />
           <Route path="/owners" element={<RequireAuth><OwnersPage /></RequireAuth>} />
           <Route path="/payments" element={<RequireAuth><Payments /></RequireAuth>} />
-          <Route path="/tenants" element={<RequireAuth><Tenants /></RequireAuth>} />
           <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
           <Route path="*" element={<Navigate to={home} replace />} />
         </Routes>

@@ -12,13 +12,19 @@ export interface AuthUser {
   tenant_id: number | null;
   email: string;
   name: string;
-  role: 'superadmin' | 'admin' | 'manager';
+  role: 'admin' | 'manager';
 }
 
 declare global {
   namespace Express {
     interface Request { user?: AuthUser }
   }
+}
+
+/** Токен по строке пользователя из БД. Нужен и при входе, и после смены своих данных. */
+export function issueToken(row: any): { token: string; user: AuthUser } {
+  const user: AuthUser = { id: row.id, tenant_id: row.tenant_id, email: row.email, name: row.name, role: row.role };
+  return { token: jwt.sign(user, JWT_SECRET, { expiresIn: '12h' }), user };
 }
 
 export function login(email: string, password: string): { token: string; user: AuthUser } | null {
@@ -28,9 +34,7 @@ export function login(email: string, password: string): { token: string; user: A
     const t = db.prepare('SELECT active, expires_at FROM tenants WHERE id = ?').get(row.tenant_id) as any;
     if (!t || !t.active) return null;
   }
-  const user: AuthUser = { id: row.id, tenant_id: row.tenant_id, email: row.email, name: row.name, role: row.role };
-  const token = jwt.sign(user, JWT_SECRET, { expiresIn: '12h' });
-  return { token, user };
+  return issueToken(row);
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -54,11 +58,7 @@ export function requireRole(...roles: string[]) {
   };
 }
 
-/** tenant_id текущего пользователя (у суперадмина — из query для просмотра). */
+/** tenant_id текущего пользователя. */
 export function tenantOf(req: Request): number {
-  if (req.user!.role === 'superadmin') {
-    const q = Number(req.query.tenant_id);
-    return Number.isFinite(q) && q > 0 ? q : 0;
-  }
   return req.user!.tenant_id!;
 }
