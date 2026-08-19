@@ -80,16 +80,46 @@ systemctl status led-list-api      # должен быть active (running)
 journalctl -u led-list-api -f      # логи в реальном времени
 ```
 
+## 4а. Перенос рабочей базы (если она уже наполнена локально)
+
+При первом старте на пустой БД создаются демо-данные. Если инвентарь уже заведён
+на рабочей машине, перенесите файл базы — иначе на сервере окажется демо-набор.
+
+На **локальной машине** (Windows, из папки проекта):
+
+```bash
+scp server/data/led.db root@195.133.31.39:/var/www/led-list/server/data/led.db
+```
+
+Если в базе есть фотографии экранов, вместе с ней едет и папка загрузок:
+
+```bash
+scp -r server/data/uploads root@195.133.31.39:/var/www/led-list/server/data/
+```
+
+Затем на **сервере**:
+
+```bash
+systemctl stop led-list-api                       # база не должна меняться во время копирования
+chown -R led-list:led-list /var/www/led-list/server/data
+systemctl start led-list-api
+```
+
+Копировать файл базы надо при остановленном сервисе: SQLite в режиме WAL держит
+рядом файлы `led.db-wal` и `led.db-shm`, и копия «на ходу» может оказаться неполной.
+По той же причине не копируйте базу обычным `cp` на работающем сервере — для этого
+есть `scripts/backup.ts` (см. шаг 9).
+
 ## 5. nginx и TLS
 
 ```bash
 cp /var/www/led-list/deploy/nginx.conf /etc/nginx/sites-available/led-list
-# замените led-list.example.ru на свой домен внутри файла
+# внутри файла уже указан домен ledlist.ru — поменяйте, если домен другой
 ln -s /etc/nginx/sites-available/led-list /etc/nginx/sites-enabled/led-list
 nginx -t && systemctl reload nginx
 
 apt install -y certbot python3-certbot-nginx
-certbot --nginx -d led-list.example.ru   # выпустит сертификат и допишет server{} для 443
+certbot --nginx -d ledlist.ru -d www.ledlist.ru   # сертификат + server{} для 443
 ```
 
 ## 6. Файрвол
@@ -105,8 +135,8 @@ ufw enable
 ## 7. Проверка
 
 ```bash
-curl -I https://led-list.example.ru              # клиент
-curl https://led-list.example.ru/api/auth/me      # 401 без токена — это нормально, значит API отвечает
+curl -I https://ledlist.ru              # клиент
+curl https://ledlist.ru/api/auth/me      # 401 без токена — это нормально, значит API отвечает
 ```
 
 Откройте домен в браузере, войдите под доступами из README — и сразу переходите к шагу 8.
