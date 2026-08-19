@@ -258,10 +258,12 @@ export default function Screens() {
           <div className="l">Свободно секунд</div>
           <div className="v">{summary.freeSec}</div>
         </div>
-        <div className="scard is-money" title="Слева — сумма за уже занятые секунды, справа — полная стоимость всех секунд блоков выборки при размещении на 30 дней">
-          <div className="l">Продано из потенциала</div>
-          <div className="v">{fmtNum(summary.moneyUsed)}<span className="scard-sub">из {fmtMoney(summary.moneyTotal)}</span></div>
-        </div>
+        {isAdmin && (
+          <div className="scard is-money" title="Слева — сумма за уже занятые секунды, справа — полная стоимость всех секунд блоков выборки при размещении на 30 дней">
+            <div className="l">Продано из потенциала</div>
+            <div className="v">{fmtNum(summary.moneyUsed)}<span className="scard-sub">из {fmtMoney(summary.moneyTotal)}</span></div>
+          </div>
+        )}
       </div>
 
       {conds.length > 0 && (

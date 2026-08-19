@@ -22,7 +22,13 @@ api.use(requireAuth);
 api.get('/auth/me', (req, res) => res.json(req.user));
 
 // ---------- Универсальный CRUD для справочников ----------
-type DictConfig = { table: string; fields: string[]; adminOnly?: boolean };
+type DictConfig = { table: string; fields: string[]; adminOnly?: boolean; deleteAdminOnly?: boolean };
+
+/** Продажу правит только администратор: менеджер ведёт черновики и брони. */
+function isManager(req: any): boolean {
+  return req.user?.role === 'manager';
+}
+const SOLD_LOCKED = 'Кампания продана — изменить или отменить её может только администратор';
 const dicts: Record<string, DictConfig> = {
   cities:       { table: 'cities', fields: ['name', 'region'] },
   'screen-types': { table: 'screen_types', fields: ['name'] },
@@ -30,7 +36,7 @@ const dicts: Record<string, DictConfig> = {
   discounts:    { table: 'discounts', fields: ['name', 'percent'] },
   'tax-regimes': { table: 'tax_regimes', fields: ['name', 'rate'] },
   owners:       { table: 'owners', fields: ['name', 'phone', 'email', 'comment'] },
-  clients:      { table: 'clients', fields: ['name', 'phone', 'email', 'address', 'contacts', 'comment'] },
+  clients:      { table: 'clients', fields: ['name', 'phone', 'email', 'address', 'contacts', 'comment'], deleteAdminOnly: true },
   managers:     { table: 'managers', fields: ['name', 'phone', 'email', 'user_id'] },
 };
 
@@ -53,7 +59,8 @@ for (const [route, cfg] of Object.entries(dicts)) {
       .run(...cols.map((c) => req.body[c]), req.params.id, tenantOf(req));
     res.json(db.prepare(`SELECT * FROM ${cfg.table} WHERE id = ?`).get(req.params.id));
   });
-  api.delete(`/${route}/:id`, (req, res) => {
+  const delGuards = cfg.deleteAdminOnly ? [requireRole('admin', 'superadmin')] : [];
+  api.delete(`/${route}/:id`, ...delGuards, (req, res) => {
     try {
       db.prepare(`DELETE FROM ${cfg.table} WHERE id = ? AND tenant_id = ?`).run(req.params.id, tenantOf(req));
       res.json({ ok: true });
@@ -394,6 +401,7 @@ api.post('/campaigns/:id/status', (req, res) => {
   if (!allowed[c.status]?.includes(target)) {
     return res.status(400).json({ error: `Переход ${c.status} → ${target} недопустим` });
   }
+  if (c.status === 'sold' && isManager(req)) return res.status(403).json({ error: SOLD_LOCKED });
 
   // При активации (бронь/продажа) — агрегатная проверка ёмкости блока по всем слотам кампании.
   if ((target === 'reserved' || target === 'sold') && (c.status === 'draft' || c.status === 'cancelled')) {
@@ -424,6 +432,7 @@ api.post('/campaigns/:id/slots', (req, res) => {
   const t = tenantOf(req);
   const c = db.prepare('SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!c) return res.status(404).json({ error: 'Кампания не найдена' });
+  if (c.status === 'sold' && isManager(req)) return res.status(403).json({ error: SOLD_LOCKED });
   const { screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, creative_id, price } = req.body ?? {};
   if (!screen_id || !duration_sec || !date_from || !date_to) {
     return res.status(400).json({ error: 'Обязательные поля: экран, длительность, период' });
@@ -450,7 +459,18 @@ api.post('/campaigns/:id/slots', (req, res) => {
   res.json({ slot: db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(info.lastInsertRowid), capacity_warning: check.ok ? null : check.reason });
 });
 
+/** Слот проданной кампании менеджеру недоступен: это часть продажи. */
+function soldSlotBlocked(req: any): boolean {
+  if (!isManager(req)) return false;
+  const row = db.prepare(`
+    SELECT c.status FROM ad_slots s JOIN campaigns c ON c.id = s.campaign_id
+    WHERE s.id = ? AND s.tenant_id = ?
+  `).get(req.params.id, tenantOf(req)) as any;
+  return row?.status === 'sold';
+}
+
 api.put('/slots/:id', (req, res) => {
+  if (soldSlotBlocked(req)) return res.status(403).json({ error: SOLD_LOCKED });
   const fields = ['creative_id', 'duration_sec', 'date_from', 'date_to', 'plays_per_day', 'time_slot_id', 'price'];
   const cols = fields.filter((f) => req.body[f] !== undefined);
   if (cols.length) {
@@ -461,6 +481,7 @@ api.put('/slots/:id', (req, res) => {
 });
 
 api.delete('/slots/:id', (req, res) => {
+  if (soldSlotBlocked(req)) return res.status(403).json({ error: SOLD_LOCKED });
   db.prepare('DELETE FROM ad_slots WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
   res.json({ ok: true });
 });

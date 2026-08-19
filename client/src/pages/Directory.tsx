@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { get, post, put, del } from '../api';
+import { get, post, put, del, isAdmin } from '../api';
 import { DataTable, Modal, TextInput, TextArea, Column, Alert, Icon } from '../components/ui';
 
 interface FieldDef { key: string; label: string; type?: string; wide?: boolean }
@@ -10,6 +10,7 @@ function CrudPage(props: {
   fields: FieldDef[];
   subtitle?: string;
   extraColumns?: Column<any>[];
+  canDelete?: boolean;
 }) {
   const [rows, setRows] = useState<any[]>([]);
   const [edit, setEdit] = useState<any | null>(null);
@@ -26,10 +27,12 @@ function CrudPage(props: {
         <button className="btn small secondary" onClick={() => setEdit(r)}>
           <Icon name="edit" size={13} /> Изменить
         </button>
-        <button className="btn small ghost" aria-label={`Удалить «${r.name}»`} onClick={async () => {
-          if (!confirm(`Удалить «${r.name}»? Действие необратимо.`)) return;
-          try { await del(`${props.endpoint}/${r.id}`); load(); } catch (e: any) { setError(e.message); }
-        }}><Icon name="trash" size={14} /></button>
+        {props.canDelete !== false && (
+          <button className="btn small ghost" aria-label={`Удалить «${r.name}»`} onClick={async () => {
+            if (!confirm(`Удалить «${r.name}»? Действие необратимо.`)) return;
+            try { await del(`${props.endpoint}/${r.id}`); load(); } catch (e: any) { setError(e.message); }
+          }}><Icon name="trash" size={14} /></button>
+        )}
       </span>
     ) },
   ];
@@ -82,6 +85,7 @@ export function ClientsPage() {
   return <CrudPage
     title="Клиенты (рекламодатели)"
     endpoint="/clients"
+    canDelete={isAdmin()}
     subtitle="Рекламодатели: контакты, контактные лица, почтовый адрес."
     fields={[
       { key: 'name', label: 'Название' },

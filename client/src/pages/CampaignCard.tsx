@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken } from '../api';
+import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken, isAdmin } from '../api';
 import { Modal, TextInput, SelectInput, StatusBadge, LoadBar, Alert, Icon } from '../components/ui';
 
 const METHOD_RU: Record<string, string> = { bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' };
 
 export default function CampaignCard() {
   const { id } = useParams();
+  const admin = isAdmin();
   const [c, setC] = useState<any | null>(null);
   const [tab, setTab] = useState<'placement' | 'creatives' | 'payment'>('placement');
   const [error, setError] = useState('');
@@ -50,7 +51,7 @@ export default function CampaignCard() {
           <StatusBadge status={c.status} />
         </h1>
         <div className="toolbar">
-          {transitions[c.status]?.map((t) => (
+          {(c.status === 'sold' && !admin ? [] : transitions[c.status] ?? []).map((t) => (
             <button key={t.to} className={`btn ${t.cls ?? ''}`} onClick={() => setStatus(t.to)}>{t.label}</button>
           ))}
         </div>
@@ -91,7 +92,8 @@ export default function CampaignCard() {
       {tab === 'placement' && (
         <>
           <div style={{ marginBottom: 12 }}>
-            <button className="btn" onClick={() => setSlotOpen(true)}>
+            <button className="btn" onClick={() => setSlotOpen(true)} disabled={c.status === 'sold' && !admin}
+              title={c.status === 'sold' && !admin ? 'Кампания продана — состав размещения меняет администратор' : undefined}>
               <Icon name="plus" size={14} /> Добавить слот размещения
             </button>
           </div>
@@ -131,10 +133,12 @@ export default function CampaignCard() {
                     <td>{s.time_slot_name ?? 'Весь день'}</td>
                     <td><b className="num">{fmtMoney(s.price)}</b></td>
                     <td>
-                      <button className="btn small ghost" aria-label="Удалить слот" onClick={async () => {
-                        if (!confirm('Удалить слот размещения?')) return;
-                        await del(`/slots/${s.id}`); load();
-                      }}><Icon name="trash" size={14} /></button>
+                      {(c.status !== 'sold' || admin) && (
+                        <button className="btn small ghost" aria-label="Удалить слот" onClick={async () => {
+                          if (!confirm('Удалить слот размещения?')) return;
+                          await del(`/slots/${s.id}`); load();
+                        }}><Icon name="trash" size={14} /></button>
+                      )}
                     </td>
                   </tr>
                 ))}

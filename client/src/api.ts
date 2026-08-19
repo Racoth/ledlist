@@ -10,6 +10,11 @@ let token: string | null = localStorage.getItem('token');
 let currentUser: User | null = JSON.parse(localStorage.getItem('user') ?? 'null');
 
 export function getUser(): User | null { return currentUser; }
+/** Права администратора: полный доступ к деньгам, экранам и продажам. */
+export function isAdmin(): boolean {
+  const r = currentUser?.role;
+  return r === 'admin' || r === 'superadmin';
+}
 export function getToken(): string | null { return token; }
 
 export function setAuth(t: string, u: User) {
