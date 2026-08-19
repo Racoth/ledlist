@@ -19,9 +19,11 @@ ExecStart=/var/www/led-list/server/node_modules/.bin/tsx src/index.ts
 Restart=on-failure
 RestartSec=3
 
-# Процесс пишет только в свою папку с данными — БД, загрузки, кэш тайлов карты
+# Процесс пишет только в свою папку с данными — БД, загрузки, кэш тайлов карты.
+# Дефис перед путём: на первом запуске каталога ещё нет, а без дефиса systemd
+# не может собрать песочницу и сервис бесконечно висит в activating.
 ProtectSystem=full
-ReadWritePaths=/var/www/led-list/server/data
+ReadWritePaths=-/var/www/led-list/server/data
 NoNewPrivileges=true
 
 [Install]

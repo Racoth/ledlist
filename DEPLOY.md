@@ -72,6 +72,7 @@ NODE_ENV=production
 ```bash
 cp /var/www/led-list/deploy/led-list-api.service /etc/systemd/system/
 # Проверьте пути и имя пользователя внутри файла, если репозиторий лежит не в /var/www/led-list
+mkdir -p /var/www/led-list/server/data
 chown -R led-list:led-list /var/www/led-list
 
 systemctl daemon-reload
