@@ -254,9 +254,23 @@ if (!screenCols.some((c) => c.name === 'price_per_sec_month')) {
 }
 
 // ---------- Учётная запись администратора системы ----------
-const ADMIN_EMAIL = 'info@novayaera.com';
-const ADMIN_NAME = 'Анзор Матаев';
-const ADMIN_PASSWORD = '123456789';
+// Пароль в исходниках не держим: репозиторий может стать публичным, а история
+// коммитов остаётся навсегда. Берём из ADMIN_PASSWORD, иначе генерируем и печатаем
+// в лог один раз — при создании учётной записи.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'info@novayaera.com';
+const ADMIN_NAME = process.env.ADMIN_NAME || 'Администратор';
+const ADMIN_PASSWORD_GENERATED = !process.env.ADMIN_PASSWORD;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || randomBytes(9).toString('base64url');
+
+/** Показать пароль, если его придумали за пользователя — иначе войти будет нечем. */
+function announceAdmin() {
+  if (!ADMIN_PASSWORD_GENERATED) return;
+  console.log('─'.repeat(60));
+  console.log(`Администратор: ${ADMIN_EMAIL}`);
+  console.log(`Пароль:        ${ADMIN_PASSWORD}`);
+  console.log('Смените его в разделе «Настройки → Мой аккаунт» после первого входа.');
+  console.log('─'.repeat(60));
+}
 
 // ---------- Seed ----------
 const hasUsers = db.prepare('SELECT COUNT(*) c FROM users').get() as { c: number };
@@ -348,6 +362,7 @@ if (hasUsers.c === 0) {
   });
   seed();
   console.log('База создана и наполнена демо-данными.');
+  announceAdmin();
 }
 
 // ---------- Миграция: уход от роли «суперадмин» ----------
@@ -389,4 +404,5 @@ if (legacyAdmin) {
   db.prepare('UPDATE users SET email = ?, name = ?, password_hash = ? WHERE id = ?')
     .run(ADMIN_EMAIL, ADMIN_NAME, hashPassword(ADMIN_PASSWORD), legacyAdmin.id);
   console.log(`Миграция: администратор системы — ${ADMIN_NAME} <${ADMIN_EMAIL}>.`);
+  announceAdmin();
 }

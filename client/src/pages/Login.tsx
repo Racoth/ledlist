@@ -7,8 +7,8 @@ import { Alert, LoopTape, LoopRuler } from '../components/ui';
 // сервере это готовая инструкция для постороннего.
 const DEV = import.meta.env.DEV;
 const DEMO = [
-  { who: 'Администратор', email: 'info@novayaera.com', password: '123456789' },
-  { who: 'Менеджер', email: 'manager@novayaera.com', password: 'manager' },
+  { who: 'Администратор', email: 'info@novayaera.com' },
+  { who: 'Менеджер', email: 'manager@novayaera.com' },
 ];
 
 // Витрина блока на экране входа: 60 секунд эфира, три рекламодателя в ротации.
@@ -20,7 +20,7 @@ const SHOWCASE = [
 
 export default function Login() {
   const [email, setEmail] = useState(DEV ? DEMO[0].email : '');
-  const [password, setPassword] = useState(DEV ? DEMO[0].password : '');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -88,12 +88,11 @@ export default function Login() {
 
           {DEV && (
             <div className="login-demo">
-              <span className="eyebrow">Демо-доступы — нажмите, чтобы подставить</span>
+              <span className="eyebrow">Учётные записи — нажмите, чтобы подставить email</span>
               {DEMO.map((d) => (
-                <button key={d.email} type="button"
-                  onClick={() => { setEmail(d.email); setPassword(d.password); }}>
+                <button key={d.email} type="button" onClick={() => setEmail(d.email)}>
                   <span className="who">{d.who}</span>
-                  <span className="cred">{d.email} / {d.password}</span>
+                  <span className="cred">{d.email}</span>
                 </button>
               ))}
             </div>
