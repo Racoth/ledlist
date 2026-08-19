@@ -22,6 +22,8 @@ cd client && npm install && npm run dev
 | Администратор компании | admin@gorodmedia.ru | admin |
 | Менеджер по продажам | manager@gorodmedia.ru | manager |
 
+Развёртывание на своём сервере (VPS, systemd, nginx, TLS, бэкапы) — см. [DEPLOY.md](DEPLOY.md).
+
 ## Архитектура
 
 - **client/** — React 18 + TypeScript + Vite, роутинг react-router, без UI-библиотек (собственные стили админ-панели).

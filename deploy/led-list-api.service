@@ -1,0 +1,28 @@
+# /etc/systemd/system/led-list-api.service
+# Замените /var/www/led-list на путь до репозитория и led-list на имя выделенного пользователя.
+#
+# systemctl daemon-reload
+# systemctl enable --now led-list-api
+# journalctl -u led-list-api -f      # логи
+
+[Unit]
+Description=LED-List API
+After=network.target
+
+[Service]
+Type=simple
+User=led-list
+Group=led-list
+WorkingDirectory=/var/www/led-list/server
+EnvironmentFile=/etc/led-list/api.env
+ExecStart=/var/www/led-list/server/node_modules/.bin/tsx src/index.ts
+Restart=on-failure
+RestartSec=3
+
+# Процесс пишет только в свою папку с данными — БД, загрузки, кэш тайлов карты
+ProtectSystem=full
+ReadWritePaths=/var/www/led-list/server/data
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

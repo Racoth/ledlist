@@ -15,4 +15,6 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 const PORT = Number(process.env.PORT ?? 3001);
-app.listen(PORT, () => console.log(`API запущен: http://localhost:${PORT}/api`));
+// По умолчанию слушаем только localhost: наружу сервер выставляет nginx.
+const HOST = process.env.HOST ?? '127.0.0.1';
+app.listen(PORT, HOST, () => console.log(`API запущен: http://${HOST}:${PORT}/api`));

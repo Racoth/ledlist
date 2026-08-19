@@ -2,6 +2,9 @@ import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
 import { db, verifyPassword } from './db.js';
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET не задан. В проде нужен собственный секрет (например: openssl rand -hex 32).');
+}
 export const JWT_SECRET = process.env.JWT_SECRET || 'led-list-dev-secret';
 
 export interface AuthUser {
