@@ -3,10 +3,12 @@ import { post, setAuth } from '../api';
 import { Brand } from '../components/Brand';
 import { Alert, LoopTape, LoopRuler } from '../components/ui';
 
+// Подсказки с паролями — только для локальной разработки: на публичном
+// сервере это готовая инструкция для постороннего.
+const DEV = import.meta.env.DEV;
 const DEMO = [
-  { who: 'Администратор', email: 'admin@gorodmedia.ru', password: 'admin' },
-  { who: 'Менеджер', email: 'manager@gorodmedia.ru', password: 'manager' },
-  { who: 'Суперадмин', email: 'admin@platform.ru', password: 'admin' },
+  { who: 'Администратор', email: 'info@novayaera.com', password: '123456789' },
+  { who: 'Менеджер', email: 'manager@novayaera.com', password: 'manager' },
 ];
 
 // Витрина блока на экране входа: 60 секунд эфира, три рекламодателя в ротации.
@@ -17,8 +19,8 @@ const SHOWCASE = [
 ];
 
 export default function Login() {
-  const [email, setEmail] = useState('admin@gorodmedia.ru');
-  const [password, setPassword] = useState('admin');
+  const [email, setEmail] = useState(DEV ? DEMO[0].email : '');
+  const [password, setPassword] = useState(DEV ? DEMO[0].password : '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -84,16 +86,18 @@ export default function Login() {
             {busy ? 'Проверяем…' : 'Войти'}
           </button>
 
-          <div className="login-demo">
-            <span className="eyebrow">Демо-доступы — нажмите, чтобы подставить</span>
-            {DEMO.map((d) => (
-              <button key={d.email} type="button"
-                onClick={() => { setEmail(d.email); setPassword(d.password); }}>
-                <span className="who">{d.who}</span>
-                <span className="cred">{d.email} / {d.password}</span>
-              </button>
-            ))}
-          </div>
+          {DEV && (
+            <div className="login-demo">
+              <span className="eyebrow">Демо-доступы — нажмите, чтобы подставить</span>
+              {DEMO.map((d) => (
+                <button key={d.email} type="button"
+                  onClick={() => { setEmail(d.email); setPassword(d.password); }}>
+                  <span className="who">{d.who}</span>
+                  <span className="cred">{d.email} / {d.password}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </form>
       </section>
     </div>
