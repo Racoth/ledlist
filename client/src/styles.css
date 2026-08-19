@@ -546,6 +546,10 @@ table.data tr.clickable { cursor: pointer; }
    ========================================================================== */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 
+/* Поле со ссылкой-действием под ним (клиент + «Новый клиент») */
+.field-with-action { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.field-with-action > .field { width: 100%; }
+
 /* --- Выбор строк и окно экспорта ------------------------------------------- */
 .sel-cell { width: 38px; text-align: center; }
 .sel-cell input[type='checkbox'] {

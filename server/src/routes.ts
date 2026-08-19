@@ -316,7 +316,7 @@ api.post('/campaigns/bulk', (req, res) => {
   if (!date_from || !date_to) return res.status(400).json({ error: 'Укажите период трансляции' });
   if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
 
-  const target = status === 'draft' ? 'draft' : 'reserved';
+  const target = status === 'draft' ? 'draft' : status === 'sold' ? 'sold' : 'reserved';
   const pct = Number(discount_percent) || 0;
 
   const items = screens.map((s: any) => ({ screen_id: Number(s.screen_id), duration_sec: Number(s.duration_sec) }));
@@ -324,8 +324,8 @@ api.post('/campaigns/bulk', (req, res) => {
     const scr = db.prepare('SELECT id, code FROM screens WHERE id = ? AND tenant_id = ?').get(it.screen_id, t) as any;
     if (!scr) return res.status(404).json({ error: 'Экран не найден' });
     if (!it.duration_sec) return res.status(400).json({ error: `Экран ${scr.code}: не задана длительность ролика` });
-    // Черновик ёмкость не удерживает — проверяем только при брони.
-    if (target === 'reserved') {
+    // Черновик ёмкость не удерживает — проверяем при брони и продаже.
+    if (target !== 'draft') {
       const check = checkCapacity(it.screen_id, date_from, date_to, it.duration_sec);
       if (!check.ok) return res.status(409).json({ error: `Экран ${scr.code}: ${check.reason}` });
     }

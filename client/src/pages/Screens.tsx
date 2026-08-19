@@ -74,6 +74,7 @@ export default function Screens() {
   const [playlistScreen, setPlaylistScreen] = useState<Screen | null>(null);
   const [scheduleScreen, setScheduleScreen] = useState<Screen | null>(null);
   const [addClientOpen, setAddClientOpen] = useState(false);
+  const [saleOpen, setSaleOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
@@ -222,8 +223,12 @@ export default function Screens() {
             <Icon name="list" size={14} /> Прайс PDF
             {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
           </button>
-          <button className="btn" onClick={() => setAddClientOpen(true)}>
+          <button className="btn secondary" onClick={() => setAddClientOpen(true)}>
             <Icon name="users" size={14} /> Добавить клиента
+          </button>
+          <button className="btn" onClick={() => setSaleOpen(true)} disabled={filtered.length === 0}>
+            <Icon name="wallet" size={14} /> Продать
+            {selectedIds.length > 0 && <span className="num">{selectedIds.length}</span>}
           </button>
           {isAdmin && (
             <button className="btn" onClick={() => setEditScreen({ orientation: 'horizontal', loop_duration_sec: 60, work_from: '06:00', work_to: '24:00', status: 'active', side: 'А' })}>
@@ -310,6 +315,11 @@ export default function Screens() {
       {addClientOpen && (
         <AddClientModal screens={rows} onClose={() => setAddClientOpen(false)}
           onCreated={(id) => { setAddClientOpen(false); nav(`/campaigns/${id}`); }} />
+      )}
+      {saleOpen && (
+        <AddClientModal screens={rows} mode="sale" preselect={selectedIds}
+          onClose={() => setSaleOpen(false)}
+          onCreated={(id) => { setSaleOpen(false); nav(`/campaigns/${id}`); }} />
       )}
       {playlistScreen && <PlaylistModal screen={playlistScreen} onClose={() => setPlaylistScreen(null)} />}
       {scheduleScreen && <ScheduleModal screen={scheduleScreen} onClose={() => setScheduleScreen(null)} />}
@@ -1130,14 +1140,21 @@ function plural(n: number, forms: [string, string, string]) {
   return forms[2];
 }
 
-function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreated: (id: number) => void }) {
+function AddClientModal(props: {
+  screens: Screen[]; mode?: 'client' | 'sale'; preselect?: number[];
+  onClose: () => void; onCreated: (id: number) => void;
+}) {
+  const sale = props.mode === 'sale';
   const [dicts, setDicts] = useState<any>({ clients: [], managers: [], discounts: [], timeSlots: [] });
   const [form, setForm] = useState<any>({
     client_id: '', manager_id: '', discount_id: '', discount_percent: 0,
     date_from: todayISO(), date_to: plusDaysISO(29),
-    duration_sec: 10, time_slot_id: '', status: 'reserved',
+    duration_sec: 10, time_slot_id: '', status: sale ? 'sold' : 'reserved',
   });
-  const [sel, setSel] = useState<Record<number, number>>({});
+  const [sel, setSel] = useState<Record<number, number>>(
+    () => Object.fromEntries((props.preselect ?? []).map((id) => [id, 10])));
+  const [newClient, setNewClient] = useState<{ name: string; phone: string; email: string } | null>(null);
+  const [clientBusy, setClientBusy] = useState(false);
   const [q, setQ] = useState('');
   const [quote, setQuote] = useState<any | null>(null);
   const [error, setError] = useState('');
@@ -1177,6 +1194,23 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
   for (const it of quote?.items ?? []) byScreen[it.screen_id] = it;
   const conflicts = (quote?.items ?? []).filter((i: any) => !i.ok);
 
+  // Клиента можно завести не выходя из окна продажи
+  async function createClient() {
+    const name = (newClient?.name ?? '').trim();
+    if (!name) { setError('Укажите название клиента.'); return; }
+    setClientBusy(true); setError('');
+    try {
+      const c = await post('/clients', {
+        name,
+        phone: (newClient?.phone ?? '').trim() || null,
+        email: (newClient?.email ?? '').trim() || null,
+      });
+      setDicts((d: any) => ({ ...d, clients: [...d.clients, c] }));
+      setForm((f: any) => ({ ...f, client_id: String(c.id) }));
+      setNewClient(null);
+    } catch (e: any) { setError(e.message); } finally { setClientBusy(false); }
+  }
+
   function toggle(id: number) {
     setSel((prev) => {
       const next = { ...prev };
@@ -1212,11 +1246,16 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   }
 
-  const blocked = form.status === 'reserved' && conflicts.length > 0;
+  const blocked = form.status !== 'draft' && conflicts.length > 0;
   const total = quote?.total ?? 0;
 
   return (
-    <Modal title="Добавить клиента" subtitle="Одна кампания сразу на нескольких экранах" wide onClose={props.onClose}
+    <Modal
+      title={sale ? 'Продажа размещения' : 'Добавить клиента'}
+      subtitle={sale
+        ? 'Кампания сразу на выбранных экранах — клиента можно завести здесь же'
+        : 'Одна кампания сразу на нескольких экранах'}
+      wide onClose={props.onClose}
       footer={<>
         <span className="muted" style={{ marginRight: 'auto', fontSize: 12.5 }}>
           {selIds.length > 0
@@ -1225,14 +1264,42 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
         </span>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
         <button className="btn" onClick={submit} disabled={busy || !form.client_id || selIds.length === 0 || blocked}>
-          {busy ? 'Создаём…' : form.status === 'draft' ? 'Создать черновик' : 'Забронировать'}
+          {busy ? 'Оформляем…'
+            : form.status === 'draft' ? 'Создать черновик'
+            : form.status === 'sold' ? 'Продать' : 'Забронировать'}
         </button>
       </>}>
       {error && <Alert tone="error">{error}</Alert>}
 
+      {newClient && (
+        <div className="panel">
+          <span className="eyebrow">Новый клиент</span>
+          <div className="form-grid">
+            <TextInput label="Название" required value={newClient.name}
+              onChange={(v) => setNewClient({ ...newClient, name: v })} placeholder="ООО «Ромашка»" />
+            <TextInput label="Телефон" value={newClient.phone}
+              onChange={(v) => setNewClient({ ...newClient, phone: v })} />
+            <TextInput label="Email" type="email" value={newClient.email}
+              onChange={(v) => setNewClient({ ...newClient, email: v })} />
+          </div>
+          <div className="picker-head" style={{ border: 0, padding: 0 }}>
+            <button className="btn small" onClick={createClient} disabled={clientBusy || !newClient.name.trim()}>
+              {clientBusy ? 'Сохраняем…' : 'Сохранить клиента'}
+            </button>
+            <button className="btn small ghost" onClick={() => setNewClient(null)}>Отмена</button>
+          </div>
+        </div>
+      )}
+
       <div className="form-grid">
-        <SelectInput label="Клиент" required value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
-          options={dicts.clients.map((c: any) => ({ value: c.id, label: c.name }))} />
+        <div className="field-with-action">
+          <SelectInput label="Клиент" required value={form.client_id} onChange={(v) => setForm({ ...form, client_id: v })}
+            options={dicts.clients.map((c: any) => ({ value: c.id, label: c.name }))} />
+          <button className="btn small ghost" disabled={!!newClient}
+            onClick={() => setNewClient({ name: '', phone: '', email: '' })}>
+            <Icon name="plus" size={13} /> Новый клиент
+          </button>
+        </div>
         <SelectInput label="Менеджер" value={form.manager_id} onChange={(v) => setForm({ ...form, manager_id: v })}
           options={dicts.managers.map((m: any) => ({ value: m.id, label: m.name }))} />
         <SelectInput label="Скидка" value={form.discount_id}
@@ -1252,8 +1319,12 @@ function AddClientModal(props: { screens: Screen[]; onClose: () => void; onCreat
           options={dicts.timeSlots.map((t: any) => ({ value: t.id, label: `${t.name} ${t.time_from}–${t.time_to} (×${t.price_coef})` }))} />
         <SelectInput label="Статус кампании" value={form.status} allowEmpty={false}
           onChange={(v) => setForm({ ...form, status: v })}
-          hint={form.status === 'draft' ? 'Черновик не удерживает ёмкость блока' : 'Бронь удержит ёмкость блока'}
-          options={[{ value: 'reserved', label: 'Бронь' }, { value: 'draft', label: 'Черновик' }]} />
+          hint={form.status === 'draft' ? 'Черновик не удерживает ёмкость блока'
+            : form.status === 'sold' ? 'Продажа занимает ёмкость блока без срока брони'
+            : 'Бронь удержит ёмкость блока на срок из настроек'}
+          options={sale
+            ? [{ value: 'sold', label: 'Продажа' }, { value: 'reserved', label: 'Бронь' }, { value: 'draft', label: 'Черновик' }]
+            : [{ value: 'reserved', label: 'Бронь' }, { value: 'draft', label: 'Черновик' }]} />
       </div>
 
       <div className="picker">
