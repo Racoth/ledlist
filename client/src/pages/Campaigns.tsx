@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, fmtMoney, fmtDate } from '../api';
+import { get, post, del, fmtMoney, fmtDate, isAdmin, plural } from '../api';
 import { DataTable, Modal, SelectInput, StatusBadge, Column, TextInput, Alert, Icon } from '../components/ui';
 
 export interface CampaignRow {
@@ -14,9 +14,23 @@ export default function Campaigns() {
   const [rows, setRows] = useState<CampaignRow[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
+  const [error, setError] = useState('');
+  const admin = isAdmin();
   const nav = useNavigate();
 
   const load = () => get('/campaigns').then(setRows).catch(() => {});
+
+  // Удаление кампании со всем содержимым — только администратору
+  async function remove(c: CampaignRow) {
+    const parts = [`${c.slots_count} ${plural(c.slots_count, ['слот', 'слота', 'слотов'])} размещения`];
+    if (c.paid > 0) parts.push(`платежи на ${fmtMoney(c.paid)}`);
+    if (!confirm(`Удалить кампанию ${c.number}${c.client_name ? ` (${c.client_name})` : ''}?
+
+Будут удалены: ${parts.join(', ')}.
+Ёмкость блока освободится. Действие необратимо.`)) return;
+    setError('');
+    try { await del(`/campaigns/${c.id}`); load(); } catch (e: any) { setError(e.message); }
+  }
   useEffect(() => { load(); }, []);
 
   const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
@@ -40,6 +54,12 @@ export default function Campaigns() {
         {c.status === 'reserved' && c.reserve_until && <span className="sub">до {fmtDate(c.reserve_until)}</span>}
       </span>
     ) },
+    ...(admin ? [{ key: '_actions', title: '', sortable: false, render: (c: CampaignRow) => (
+      <span className="actions-cell" onClick={(e) => e.stopPropagation()}>
+        <button className="btn small ghost" aria-label={`Удалить кампанию ${c.number}`}
+          onClick={() => remove(c)}><Icon name="trash" size={14} /></button>
+      </span>
+    ) }] : []),
   ];
 
   return (
@@ -64,6 +84,7 @@ export default function Campaigns() {
         Кампания собирает слоты в блоках экранов. Пока она в черновике, ёмкость не удерживается —
         бронь и продажа проверяют блок целиком.
       </div>
+      {error && <Alert tone="error">{error}</Alert>}
       <DataTable
         caption="Кампании"
         columns={columns}

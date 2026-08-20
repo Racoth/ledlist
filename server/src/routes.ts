@@ -549,10 +549,28 @@ api.post('/campaigns/:id/status', (req, res) => {
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(c.id));
 });
 
+// Полное удаление кампании вместе со слотами, креативами и платежами.
+// Ёмкость блока освобождается сама: слоты исчезают, движок считает по факту.
 api.delete('/campaigns/:id', requireRole('admin'), (req, res) => {
-  db.prepare('DELETE FROM payments WHERE campaign_id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
-  db.prepare('DELETE FROM campaigns WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
-  res.json({ ok: true });
+  const t = tenantOf(req);
+  const c = db.prepare('SELECT id, number FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  if (!c) return res.status(404).json({ error: 'Кампания не найдена' });
+
+  // Файлы роликов лежат на диске — каскад по внешнему ключу их не тронет
+  const files = db.prepare('SELECT stored_name FROM creatives WHERE campaign_id = ? AND tenant_id = ?')
+    .all(c.id, t) as { stored_name: string }[];
+
+  const drop = db.transaction(() => {
+    db.prepare('DELETE FROM payments WHERE campaign_id = ? AND tenant_id = ?').run(c.id, t);
+    // ad_slots и creatives уходят каскадом (ON DELETE CASCADE)
+    db.prepare('DELETE FROM campaigns WHERE id = ? AND tenant_id = ?').run(c.id, t);
+  });
+  drop();
+
+  for (const f of files) {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, f.stored_name)); } catch { /* файла уже нет — не страшно */ }
+  }
+  res.json({ ok: true, number: c.number });
 });
 
 // ---------- Слоты размещения ----------

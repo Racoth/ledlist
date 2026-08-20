@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken, isAdmin } from '../api';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken, isAdmin, plural } from '../api';
 import { Modal, TextInput, SelectInput, StatusBadge, LoadBar, Alert, Icon } from '../components/ui';
 
 const METHOD_RU: Record<string, string> = { bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' };
 
 export default function CampaignCard() {
   const { id } = useParams();
+  const nav = useNavigate();
   const admin = isAdmin();
   const [c, setC] = useState<any | null>(null);
   const [tab, setTab] = useState<'placement' | 'creatives' | 'payment'>('placement');
@@ -36,6 +37,24 @@ export default function CampaignCard() {
     } catch (e: any) { setError(e.message); }
   }
 
+  // Полное удаление кампании — только администратору и только с подтверждением:
+  // вместе с ней исчезают слоты, ролики и платежи, восстановить нечем.
+  async function removeCampaign() {
+    if (!c) return;
+    const parts = [`${c.slots.length} ${plural(c.slots.length, ['слот размещения', 'слота размещения', 'слотов размещения'])}`];
+    if (c.creatives.length) parts.push(`${c.creatives.length} ${plural(c.creatives.length, ['ролик', 'ролика', 'роликов'])}`);
+    if (c.payments.length) parts.push(`${c.payments.length} ${plural(c.payments.length, ['платёж', 'платежа', 'платежей'])} на ${fmtMoney(paid)}`);
+    if (!confirm(`Удалить кампанию ${c.number} и всё, что к ней относится?
+
+Будут удалены: ${parts.join(', ')}.
+Ёмкость блока освободится. Действие необратимо.`)) return;
+    setError(''); setOk('');
+    try {
+      await del(`/campaigns/${id}`);
+      nav('/campaigns');
+    } catch (e: any) { setError(e.message); }
+  }
+
   const transitions: Record<string, { to: string; label: string; cls?: string }[]> = {
     draft: [{ to: 'reserved', label: 'Забронировать слоты' }, { to: 'cancelled', label: 'Отменить', cls: 'secondary' }],
     reserved: [{ to: 'sold', label: 'Отметить проданной' }, { to: 'draft', label: 'Вернуть в черновик', cls: 'secondary' }, { to: 'cancelled', label: 'Отменить', cls: 'danger' }],
@@ -54,6 +73,12 @@ export default function CampaignCard() {
           {(c.status === 'sold' && !admin ? [] : transitions[c.status] ?? []).map((t) => (
             <button key={t.to} className={`btn ${t.cls ?? ''}`} onClick={() => setStatus(t.to)}>{t.label}</button>
           ))}
+          {admin && (
+            <button className="btn secondary" onClick={removeCampaign}
+              title="Удалить кампанию вместе со слотами, роликами и платежами">
+              <Icon name="trash" size={14} /> Удалить
+            </button>
+          )}
         </div>
       </div>
       <div className="page-sub">

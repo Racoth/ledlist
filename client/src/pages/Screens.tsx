@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, put, del, uploadFile, downloadPost, getToken, fmtMoney, fmtNum, fmtDate, getUser, todayISO, plusDaysISO } from '../api';
+import { get, post, put, del, uploadFile, downloadPost, getToken, fmtMoney, fmtNum, fmtDate, getUser, todayISO, plusDaysISO, plural } from '../api';
 import {
   DataTable, Modal, TextInput, SelectInput, TextArea, StatusBadge, LoadBar, ColumnsButton,
   Column, Alert, Icon, LoopTape, LoopRuler, TapeLegend, TapeSegment, seriesColor, loadTone, onColor,
@@ -1134,14 +1134,6 @@ function AddClientToScreenModal(props: { screen: Screen; year: number; month: nu
 }
 
 // ---------- Добавить клиента: одна кампания сразу на несколько экранов ----------
-function plural(n: number, forms: [string, string, string]) {
-  const a = Math.abs(n) % 100, b = a % 10;
-  if (a > 10 && a < 20) return forms[2];
-  if (b > 1 && b < 5) return forms[1];
-  if (b === 1) return forms[0];
-  return forms[2];
-}
-
 function AddClientModal(props: {
   screens: Screen[]; mode?: 'client' | 'sale'; preselect?: number[];
   onClose: () => void; onCreated: (id: number) => void;
