@@ -190,16 +190,13 @@ apt install -y cron
 ## 10. Обновление после изменений в репозитории
 
 ```bash
-su - led-list -s /bin/bash
-cd /var/www/led-list
-git pull
-cd server && npm ci
-cd ../client && npm ci && npm run build
-exit
-
-systemctl restart led-list-api
-# nginx перезапускать не нужно — он просто отдаёт файлы из client/dist заново
+git config --global --add safe.directory /var/www/led-list   # один раз: каталог принадлежит led-list, а команды идут от root
+cd /var/www/led-list && git pull   && cd server && npm ci   && cd ../client && npm ci && npm run build   && chown -R led-list:led-list /var/www/led-list   && systemctl restart led-list-api && systemctl is-active led-list-api
 ```
+
+`chown` в конце не косметика: сборка от root оставляет `node_modules` и `client/dist`
+с владельцем root, и сервис под `led-list` перестаёт их читать. nginx перезапускать
+не нужно — он просто отдаёт обновлённые файлы из `client/dist`.
 
 ## Примечания
 
