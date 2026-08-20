@@ -177,9 +177,12 @@ node_modules/.bin/tsx scripts/backup.ts
 не защита от отказа диска или взлома):
 
 ```bash
-crontab -e -u led-list
-# 0 3 * * * cd /var/www/led-list/server && node_modules/.bin/tsx scripts/backup.ts >> /var/log/led-list-backup.log 2>&1
+apt install -y cron
+(crontab -u led-list -l 2>/dev/null; echo "0 3 * * * cd /var/www/led-list/server && node_modules/.bin/tsx scripts/backup.ts >> /var/www/led-list/server/data/backup.log 2>&1") | crontab -u led-list -
 ```
+
+Лог кладём в `server/data`, а не в `/var/log`: `led-list` — системный пользователь
+без прав на запись в системные каталоги, задание молча падало бы каждую ночь.
 
 Куда копировать за пределы сервера (например, `rclone`/`rsync` на другой хост или
 в объектное хранилище) — на ваше усмотрение, зависит от того, что уже есть в инфраструктуре.
