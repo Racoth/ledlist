@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { get, post, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken, isAdmin, plural } from '../api';
+import { get, post, put, del, uploadFile, fmtMoney, fmtDate, todayISO, plusDaysISO, getToken, isAdmin, plural } from '../api';
 import { Modal, TextInput, SelectInput, StatusBadge, LoadBar, Alert, Icon } from '../components/ui';
 
 const METHOD_RU: Record<string, string> = { bank: 'Банковский перевод', cash: 'Наличные', card: 'Карта' };
@@ -14,6 +14,7 @@ export default function CampaignCard() {
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
   const [slotOpen, setSlotOpen] = useState(false);
+  const [editSlot, setEditSlot] = useState<any | null>(null);
 
   const load = () => get(`/campaigns/${id}`).then(setC).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
@@ -117,8 +118,7 @@ export default function CampaignCard() {
       {tab === 'placement' && (
         <>
           <div style={{ marginBottom: 12 }}>
-            <button className="btn" onClick={() => setSlotOpen(true)} disabled={c.status === 'sold' && !admin}
-              title={c.status === 'sold' && !admin ? 'Кампания продана — состав размещения меняет администратор' : undefined}>
+            <button className="btn" onClick={() => setSlotOpen(true)}>
               <Icon name="plus" size={14} /> Добавить слот размещения
             </button>
           </div>
@@ -158,12 +158,18 @@ export default function CampaignCard() {
                     <td>{s.time_slot_name ?? 'Весь день'}</td>
                     <td><b className="num">{fmtMoney(s.price)}</b></td>
                     <td>
-                      {(c.status !== 'sold' || admin) && (
-                        <button className="btn small ghost" aria-label="Удалить слот" onClick={async () => {
-                          if (!confirm('Удалить слот размещения?')) return;
-                          await del(`/slots/${s.id}`); load();
-                        }}><Icon name="trash" size={14} /></button>
-                      )}
+                      <span className="actions-cell">
+                        <button className="btn small secondary" onClick={() => setEditSlot(s)}
+                          aria-label={`Изменить слот на экране ${s.screen_code}`}>
+                          <Icon name="edit" size={13} /> Изменить
+                        </button>
+                        {(c.status !== 'sold' || admin) && (
+                          <button className="btn small ghost" aria-label="Удалить слот" onClick={async () => {
+                            if (!confirm('Удалить слот размещения?')) return;
+                            await del(`/slots/${s.id}`); load();
+                          }}><Icon name="trash" size={14} /></button>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -176,19 +182,35 @@ export default function CampaignCard() {
       {tab === 'creatives' && <CreativesTab campaign={c} reload={load} />}
       {tab === 'payment' && <PaymentTab campaign={c} reload={load} total={total} paid={paid} />}
 
-      {slotOpen && (
-        <AddSlotModal campaign={c} onClose={() => setSlotOpen(false)}
-          onAdded={(warn) => { setSlotOpen(false); if (warn) setError(`Слот добавлен в черновик, но: ${warn}`); load(); }} />
+      {(slotOpen || editSlot) && (
+        <SlotModal campaign={c} slot={editSlot}
+          onClose={() => { setSlotOpen(false); setEditSlot(null); }}
+          onSaved={(warn) => {
+            setSlotOpen(false); setEditSlot(null);
+            if (warn) setError(`Слот сохранён в черновике, но: ${warn}`);
+            load();
+          }} />
       )}
     </div>
   );
 }
 
-// ---------- Добавление слота: проверка ёмкости + калькулятор ----------
-function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (warning: string | null) => void }) {
+// ---------- Слот размещения: добавление и правка, проверка ёмкости + калькулятор ----------
+function SlotModal(props: {
+  campaign: any; slot?: any | null;
+  onClose: () => void; onSaved: (warning: string | null) => void;
+}) {
+  const editing = !!props.slot;
   const [screens, setScreens] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({
+  const [form, setForm] = useState<any>(() => props.slot ? {
+    screen_id: String(props.slot.screen_id),
+    duration_sec: props.slot.duration_sec,
+    date_from: props.slot.date_from,
+    date_to: props.slot.date_to,
+    time_slot_id: props.slot.time_slot_id ? String(props.slot.time_slot_id) : '',
+    creative_id: props.slot.creative_id ? String(props.slot.creative_id) : '',
+  } : {
     screen_id: '', duration_sec: 10,
     date_from: todayISO(), date_to: plusDaysISO(29), time_slot_id: '', creative_id: '',
   });
@@ -210,6 +232,8 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
           post('/capacity/check', {
             screen_id: Number(form.screen_id), date_from: form.date_from, date_to: form.date_to,
             duration_sec: Number(form.duration_sec),
+            // при правке сам слот не должен мешать сам себе
+            exclude_slot_id: props.slot?.id,
           }),
           post('/calc/price', {
             screen_id: Number(form.screen_id), duration_sec: Number(form.duration_sec),
@@ -224,17 +248,23 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
     return () => clearTimeout(timer);
   }, [form.screen_id, form.duration_sec, form.date_from, form.date_to, form.time_slot_id]);
 
-  async function add() {
+  async function save() {
     setError('');
+    const body = {
+      screen_id: Number(form.screen_id), duration_sec: Number(form.duration_sec),
+      date_from: form.date_from, date_to: form.date_to,
+      time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
+      creative_id: form.creative_id ? Number(form.creative_id) : null,
+      price: calc?.total,
+    };
     try {
-      const res = await post(`/campaigns/${props.campaign.id}/slots`, {
-        screen_id: Number(form.screen_id), duration_sec: Number(form.duration_sec),
-        date_from: form.date_from, date_to: form.date_to,
-        time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
-        creative_id: form.creative_id ? Number(form.creative_id) : null,
-        price: calc?.total,
-      });
-      props.onAdded(res.capacity_warning);
+      if (editing) {
+        await put(`/slots/${props.slot.id}`, body);
+        props.onSaved(null);
+      } else {
+        const res = await post(`/campaigns/${props.campaign.id}/slots`, body);
+        props.onSaved(res.capacity_warning);
+      }
     } catch (e: any) { setError(e.message); }
   }
 
@@ -246,11 +276,13 @@ function AddSlotModal(props: { campaign: any; onClose: () => void; onAdded: (war
     : null;
 
   return (
-    <Modal title="Слот размещения в блоке" subtitle={`Кампания ${props.campaign.number}`} wide onClose={props.onClose}
+    <Modal
+      title={editing ? 'Изменение слота размещения' : 'Слот размещения в блоке'}
+      subtitle={`Кампания ${props.campaign.number}`} wide onClose={props.onClose}
       footer={<>
         <button className="btn secondary" onClick={props.onClose}>Отмена</button>
-        <button className="btn" onClick={add} disabled={!form.screen_id || !!capBlocked}>
-          Добавить слот{calc ? ` — ${fmtMoney(calc.total)}` : ''}
+        <button className="btn" onClick={save} disabled={!form.screen_id || !!capBlocked}>
+          {editing ? 'Сохранить' : 'Добавить слот'}{calc ? ` — ${fmtMoney(calc.total)}` : ''}
         </button>
       </>}>
       {error && <Alert tone="error">{error}</Alert>}

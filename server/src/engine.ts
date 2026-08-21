@@ -93,6 +93,60 @@ export function checkCapacity(screenId: number, from: string, to: string, durati
 }
 
 /**
+ * Проверка при правке существующего слота: сам слот из расчёта исключается,
+ * иначе он конкурировал бы сам с собой и любое изменение выглядело бы переполнением.
+ * Остальные слоты той же кампании учитываются — они тоже занимают блок.
+ */
+export function checkCapacityForSlot(
+  slotId: number, screenId: number, from: string, to: string, durationSec: number,
+) {
+  const screen = db.prepare('SELECT loop_duration_sec FROM screens WHERE id = ?').get(screenId) as
+    { loop_duration_sec: number } | undefined;
+  if (!screen) return { ok: false, reason: 'Экран не найден' };
+  const loop = screen.loop_duration_sec;
+
+  const others = db.prepare(`
+    SELECT s.duration_sec, s.date_from, s.date_to
+    FROM ad_slots s JOIN campaigns c ON c.id = s.campaign_id
+    WHERE s.screen_id = ? AND c.status IN ('reserved','sold')
+      AND s.date_from <= ? AND s.date_to >= ? AND s.id != ?
+  `).all(screenId, to, from, slotId) as { duration_sec: number; date_from: string; date_to: string }[];
+
+  const overflow: string[] = [];
+  const days: DayLoad[] = [];
+  let maxUsed = 0;
+  for (const date of eachDay(from, to)) {
+    let used = 0;
+    for (const o of others) if (o.date_from <= date && o.date_to >= date) used += o.duration_sec;
+    days.push({ date, used_sec: used, load_pct: Math.round((used / loop) * 1000) / 10 });
+    maxUsed = Math.max(maxUsed, used);
+    if (used + durationSec > loop) overflow.push(date);
+  }
+
+  // Загрузка считается без правимого слота — иначе в подсказке «свободно N сек»
+  // его секунды выглядели бы занятыми, хотя они как раз и освобождаются.
+  const load = {
+    screen_id: screenId,
+    loop_duration_sec: loop,
+    max_used_sec: maxUsed,
+    max_load_pct: Math.round((maxUsed / loop) * 1000) / 10,
+    avg_load_pct: days.length ? Math.round((days.reduce((a, d) => a + d.load_pct, 0) / days.length) * 10) / 10 : 0,
+    free_sec: Math.max(0, loop - maxUsed),
+    days,
+  };
+
+  if (overflow.length > 0) {
+    return {
+      ok: false,
+      reason: `Блок переполнен: не хватает места в ${overflow.length} дн. (свободно ${load.free_sec} сек, требуется ${durationSec} сек)`,
+      overflow_days: overflow,
+      load,
+    };
+  }
+  return { ok: true, load };
+}
+
+/**
  * Агрегатная проверка кампании перед бронью/продажей:
  * по каждому экрану и каждому дню сумма длительностей ВСЕХ роликов кампании
  * плюс ролики других активных кампаний не должна превышать длину блока.

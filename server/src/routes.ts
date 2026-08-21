@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { db, hashPassword, verifyPassword, UPLOADS_DIR } from './db.js';
 import { issueToken, login, requireAuth, requireRole, tenantOf } from './auth.js';
-import { loopLoad, checkCapacity, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
+import { loopLoad, checkCapacity, checkCapacityForSlot, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
 import { writeScreensPdf } from './pdf.js';
 
 export const api = Router();
@@ -346,7 +346,13 @@ api.get('/screens/:id/playlist', (req, res) => {
 
 // ---------- Проверка ёмкости и калькулятор ----------
 api.post('/capacity/check', (req, res) => {
-  const { screen_id, date_from, date_to, duration_sec, exclude_campaign_id } = req.body ?? {};
+  const { screen_id, date_from, date_to, duration_sec, exclude_campaign_id, exclude_slot_id } = req.body ?? {};
+  // При правке существующего слота исключаем его самого, иначе он попадёт в занятое
+  // место и любое изменение выглядело бы переполнением блока.
+  if (exclude_slot_id) {
+    return res.json(checkCapacityForSlot(
+      Number(exclude_slot_id), Number(screen_id), String(date_from), String(date_to), Number(duration_sec)));
+  }
   const result = checkCapacity(Number(screen_id), String(date_from), String(date_to), Number(duration_sec), exclude_campaign_id ? Number(exclude_campaign_id) : undefined);
   res.json(result);
 });
@@ -578,7 +584,6 @@ api.post('/campaigns/:id/slots', (req, res) => {
   const t = tenantOf(req);
   const c = db.prepare('SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!c) return res.status(404).json({ error: 'Кампания не найдена' });
-  if (c.status === 'sold' && isManager(req)) return res.status(403).json({ error: SOLD_LOCKED });
   const { screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, creative_id, price } = req.body ?? {};
   if (!screen_id || !duration_sec || !date_from || !date_to) {
     return res.status(400).json({ error: 'Обязательные поля: экран, длительность, период' });
@@ -605,7 +610,7 @@ api.post('/campaigns/:id/slots', (req, res) => {
   res.json({ slot: db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(info.lastInsertRowid), capacity_warning: check.ok ? null : check.reason });
 });
 
-/** Слот проданной кампании менеджеру недоступен: это часть продажи. */
+/** Слот проданной кампании менеджер не удаляет: это уменьшение продажи. */
 function soldSlotBlocked(req: any): boolean {
   if (!isManager(req)) return false;
   const row = db.prepare(`
@@ -615,15 +620,56 @@ function soldSlotBlocked(req: any): boolean {
   return row?.status === 'sold';
 }
 
+// Правка слота: меняются экран, длительность, период, тайм-слот и ролик.
+// Цена пересчитывается сама — иначе после смены длительности в кампании
+// осталась бы сумма от прежних параметров.
 api.put('/slots/:id', (req, res) => {
-  if (soldSlotBlocked(req)) return res.status(403).json({ error: SOLD_LOCKED });
-  const fields = ['creative_id', 'duration_sec', 'date_from', 'date_to', 'plays_per_day', 'time_slot_id', 'price'];
-  const cols = fields.filter((f) => req.body[f] !== undefined);
-  if (cols.length) {
-    db.prepare(`UPDATE ad_slots SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`)
-      .run(...cols.map((c) => req.body[c]), req.params.id, tenantOf(req));
+  expireReservations();
+  const t = tenantOf(req);
+  const slot = db.prepare(`
+    SELECT s.*, c.status, c.discount_percent
+    FROM ad_slots s JOIN campaigns c ON c.id = s.campaign_id
+    WHERE s.id = ? AND s.tenant_id = ?
+  `).get(req.params.id, t) as any;
+  if (!slot) return res.status(404).json({ error: 'Слот не найден' });
+
+  const next = {
+    screen_id: Number(req.body?.screen_id ?? slot.screen_id),
+    duration_sec: Number(req.body?.duration_sec ?? slot.duration_sec),
+    date_from: String(req.body?.date_from ?? slot.date_from),
+    date_to: String(req.body?.date_to ?? slot.date_to),
+    time_slot_id: req.body?.time_slot_id === undefined ? slot.time_slot_id
+      : (req.body.time_slot_id ? Number(req.body.time_slot_id) : null),
+    creative_id: req.body?.creative_id === undefined ? slot.creative_id
+      : (req.body.creative_id ? Number(req.body.creative_id) : null),
+  };
+  if (!next.duration_sec) return res.status(400).json({ error: 'Укажите длительность ролика' });
+  if (next.date_to < next.date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
+
+  const screen = db.prepare('SELECT id, code FROM screens WHERE id = ? AND tenant_id = ?').get(next.screen_id, t) as any;
+  if (!screen) return res.status(404).json({ error: 'Экран не найден' });
+
+  // Черновик и отменённая ёмкость не удерживают — проверяем бронь и продажу
+  if (slot.status === 'reserved' || slot.status === 'sold') {
+    const check = checkCapacityForSlot(slot.id, next.screen_id, next.date_from, next.date_to, next.duration_sec);
+    if (!check.ok) return res.status(409).json({ error: `Экран ${screen.code}: ${check.reason}` });
   }
-  res.json(db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(req.params.id));
+
+  const calc = calcPrice({
+    screen_id: next.screen_id, duration_sec: next.duration_sec,
+    date_from: next.date_from, date_to: next.date_to,
+    time_slot_id: next.time_slot_id, discount_percent: slot.discount_percent ?? 0,
+  });
+  const price = req.body?.price !== undefined ? Number(req.body.price) : (calc?.total ?? slot.price);
+
+  db.prepare(`
+    UPDATE ad_slots SET screen_id = ?, duration_sec = ?, date_from = ?, date_to = ?,
+      time_slot_id = ?, creative_id = ?, plays_per_day = ?, price = ?
+    WHERE id = ? AND tenant_id = ?
+  `).run(next.screen_id, next.duration_sec, next.date_from, next.date_to,
+    next.time_slot_id, next.creative_id, calc?.plays_per_day ?? slot.plays_per_day, price, slot.id, t);
+
+  res.json(db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(slot.id));
 });
 
 api.delete('/slots/:id', (req, res) => {
