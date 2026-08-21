@@ -6,6 +6,7 @@ import { db, hashPassword, verifyPassword, UPLOADS_DIR } from './db.js';
 import { issueToken, login, requireAuth, requireRole, tenantOf } from './auth.js';
 import { loopLoad, checkCapacity, checkCapacityForSlot, checkCampaignCapacity, calcPrice, expireReservations } from './engine.js';
 import { writeScreensPdf } from './pdf.js';
+import { cloudEnabled, storeUpload, signedUrl, removeStored } from './storage.js';
 
 export const api = Router();
 
@@ -557,14 +558,14 @@ api.post('/campaigns/:id/status', (req, res) => {
 
 // Полное удаление кампании вместе со слотами, креативами и платежами.
 // Ёмкость блока освобождается сама: слоты исчезают, движок считает по факту.
-api.delete('/campaigns/:id', requireRole('admin'), (req, res) => {
+api.delete('/campaigns/:id', requireRole('admin'), async (req, res) => {
   const t = tenantOf(req);
   const c = db.prepare('SELECT id, number FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!c) return res.status(404).json({ error: 'Кампания не найдена' });
 
   // Файлы роликов лежат на диске — каскад по внешнему ключу их не тронет
-  const files = db.prepare('SELECT stored_name FROM creatives WHERE campaign_id = ? AND tenant_id = ?')
-    .all(c.id, t) as { stored_name: string }[];
+  const files = db.prepare('SELECT stored_name, storage FROM creatives WHERE campaign_id = ? AND tenant_id = ?')
+    .all(c.id, t) as { stored_name: string; storage: string }[];
 
   const drop = db.transaction(() => {
     db.prepare('DELETE FROM payments WHERE campaign_id = ? AND tenant_id = ?').run(c.id, t);
@@ -573,9 +574,7 @@ api.delete('/campaigns/:id', requireRole('admin'), (req, res) => {
   });
   drop();
 
-  for (const f of files) {
-    try { fs.unlinkSync(path.join(UPLOADS_DIR, f.stored_name)); } catch { /* файла уже нет — не страшно */ }
-  }
+  for (const f of files) await removeStored(f.stored_name, f.storage);
   res.json({ ok: true, number: c.number });
 });
 
@@ -692,29 +691,47 @@ const upload = multer({
   },
 });
 
-api.post('/campaigns/:id/creatives', upload.single('file'), (req, res) => {
+api.post('/campaigns/:id/creatives', upload.single('file'), async (req, res) => {
   const t = tenantOf(req);
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, t);
   if (!c) return res.status(404).json({ error: 'Кампания не найдена' });
   if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
   const { duration_sec, width, height } = req.body;
+
+  let storage: 's3' | 'local' = 'local';
+  try {
+    storage = await storeUpload(req.file.filename, req.file.mimetype);
+  } catch (e: any) {
+    // Файл остался на диске — запись всё равно создаём, ролик не потеряется
+    console.error('Не удалось выгрузить креатив в облако:', e?.message ?? e);
+  }
+
   const info = db.prepare(`
-    INSERT INTO creatives (tenant_id, campaign_id, filename, stored_name, mime, size_bytes, duration_sec, width, height)
-    VALUES (?,?,?,?,?,?,?,?,?)
+    INSERT INTO creatives (tenant_id, campaign_id, filename, stored_name, mime, size_bytes, duration_sec, width, height, storage)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
   `).run(t, req.params.id, Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.filename,
-    req.file.mimetype, req.file.size, duration_sec ?? null, width ?? null, height ?? null);
+    req.file.mimetype, req.file.size, duration_sec ?? null, width ?? null, height ?? null, storage);
   res.json(db.prepare('SELECT * FROM creatives WHERE id = ?').get(info.lastInsertRowid));
 });
 
-api.get('/creatives/:id/file', (req, res) => {
+api.get('/creatives/:id/file', async (req, res) => {
   const cr = db.prepare('SELECT * FROM creatives WHERE id = ? AND tenant_id = ?').get(req.params.id, tenantOf(req)) as any;
   if (!cr) return res.status(404).json({ error: 'Не найдено' });
+  if (cr.storage === 's3') {
+    // Временная ссылка: файл скачивается прямо из облака, минуя наш сервер
+    try { return res.redirect(await signedUrl(`uploads/${cr.stored_name}`)); }
+    catch (e: any) { return res.status(502).json({ error: `Облако недоступно: ${e?.message ?? e}` }); }
+  }
   res.sendFile(path.join(UPLOADS_DIR, cr.stored_name));
 });
 
-api.delete('/creatives/:id', (req, res) => {
-  db.prepare('UPDATE ad_slots SET creative_id = NULL WHERE creative_id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
-  db.prepare('DELETE FROM creatives WHERE id = ? AND tenant_id = ?').run(req.params.id, tenantOf(req));
+api.delete('/creatives/:id', async (req, res) => {
+  const t = tenantOf(req);
+  const cr = db.prepare('SELECT stored_name, storage FROM creatives WHERE id = ? AND tenant_id = ?')
+    .get(req.params.id, t) as any;
+  db.prepare('UPDATE ad_slots SET creative_id = NULL WHERE creative_id = ? AND tenant_id = ?').run(req.params.id, t);
+  db.prepare('DELETE FROM creatives WHERE id = ? AND tenant_id = ?').run(req.params.id, t);
+  if (cr) await removeStored(cr.stored_name, cr.storage);
   res.json({ ok: true });
 });
 
@@ -895,26 +912,38 @@ api.get('/screens/:id/photos', (req, res) => {
   res.json(rows);
 });
 
-api.post('/screens/:id/photos', requireRole('admin'), photoUpload.single('file'), (req, res) => {
+api.post('/screens/:id/photos', requireRole('admin'), photoUpload.single('file'), async (req, res) => {
   const t = tenantOf(req);
   const screen = db.prepare('SELECT id FROM screens WHERE id = ? AND tenant_id = ?').get(req.params.id, t);
   if (!screen) return res.status(404).json({ error: 'Экран не найден' });
   if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
   const next = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM screen_photos WHERE screen_id = ?')
     .get(req.params.id) as any;
+
+  let storage: 's3' | 'local' = 'local';
+  try {
+    storage = await storeUpload(req.file.filename, req.file.mimetype);
+  } catch (e: any) {
+    console.error('Не удалось выгрузить фото в облако:', e?.message ?? e);
+  }
+
   const info = db.prepare(`
-    INSERT INTO screen_photos (tenant_id, screen_id, filename, stored_name, mime, size_bytes, sort_order)
-    VALUES (?,?,?,?,?,?,?)
+    INSERT INTO screen_photos (tenant_id, screen_id, filename, stored_name, mime, size_bytes, sort_order, storage)
+    VALUES (?,?,?,?,?,?,?,?)
   `).run(t, req.params.id, Buffer.from(req.file.originalname, 'latin1').toString('utf8'),
-    req.file.filename, req.file.mimetype, req.file.size, next.n);
+    req.file.filename, req.file.mimetype, req.file.size, next.n, storage);
   res.json(db.prepare('SELECT id, filename, mime, size_bytes, sort_order FROM screen_photos WHERE id = ?')
     .get(info.lastInsertRowid));
 });
 
-api.get('/photos/:id/file', (req, res) => {
-  const p = db.prepare('SELECT stored_name FROM screen_photos WHERE id = ? AND tenant_id = ?')
+api.get('/photos/:id/file', async (req, res) => {
+  const p = db.prepare('SELECT stored_name, storage FROM screen_photos WHERE id = ? AND tenant_id = ?')
     .get(req.params.id, tenantOf(req)) as any;
   if (!p) return res.status(404).json({ error: 'Не найдено' });
+  if (p.storage === 's3') {
+    try { return res.redirect(await signedUrl(`uploads/${p.stored_name}`)); }
+    catch (e: any) { return res.status(502).json({ error: `Облако недоступно: ${e?.message ?? e}` }); }
+  }
   res.sendFile(path.join(UPLOADS_DIR, p.stored_name));
 });
 
@@ -929,12 +958,12 @@ api.post('/photos/:id/primary', requireRole('admin'), (req, res) => {
   res.json({ ok: true });
 });
 
-api.delete('/photos/:id', requireRole('admin'), (req, res) => {
+api.delete('/photos/:id', requireRole('admin'), async (req, res) => {
   const t = tenantOf(req);
-  const p = db.prepare('SELECT stored_name FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
+  const p = db.prepare('SELECT stored_name, storage FROM screen_photos WHERE id = ? AND tenant_id = ?').get(req.params.id, t) as any;
   if (!p) return res.status(404).json({ error: 'Не найдено' });
   db.prepare('DELETE FROM screen_photos WHERE id = ? AND tenant_id = ?').run(req.params.id, t);
-  fs.rm(path.join(UPLOADS_DIR, p.stored_name), { force: true }, () => {});
+  await removeStored(p.stored_name, p.storage);
   res.json({ ok: true });
 });
 

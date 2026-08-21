@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import type { Response } from 'express';
 import { db, UPLOADS_DIR } from './db.js';
+import { readStored } from './storage.js';
 import { loopLoad, naturalPlaysPerDay, calcPrice } from './engine.js';
 
 const SERVER_ROOT = path.resolve(import.meta.dirname, '..');
@@ -303,10 +304,22 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
 
   // Фото и карта — во всю ширину, друг под другом, поделив остаток страницы
   const photo = db.prepare(`
-    SELECT stored_name, mime FROM screen_photos
+    SELECT stored_name, mime, storage FROM screen_photos
     WHERE screen_id = ? AND mime IN ('image/jpeg','image/png')
     ORDER BY sort_order, id LIMIT 1
-  `).get(s.id) as { stored_name: string; mime: string } | undefined;
+  `).get(s.id) as { stored_name: string; mime: string; storage: string } | undefined;
+
+  // PDFKit принимает и путь, и буфер — из облака файл приходит буфером
+  let photoData: string | Buffer | null = null;
+  if (photo) {
+    try {
+      photoData = photo.storage === 's3'
+        ? await readStored(photo.stored_name, 's3')
+        : path.join(UPLOADS_DIR, photo.stored_name);
+    } catch (e: any) {
+      console.error('Фото для прайса недоступно:', e?.message ?? e);
+    }
+  }
 
   const LABEL_H = 13;
   const GAP = 14;
@@ -314,12 +327,12 @@ async function screenPage(doc: PDFKit.PDFDocument, s: any, company: string) {
   const boxH = Math.max(130, (PAGE.h - M - 20 - mediaTop - LABEL_H * 2 - GAP) / 2);
 
   // Фотография — сверху
-  label(doc, photo ? 'Фотография' : 'Фотография — не загружена', M, mediaTop);
+  label(doc, photoData ? 'Фотография' : 'Фотография — не загружена', M, mediaTop);
   const photoY = mediaTop + LABEL_H;
-  if (photo) {
+  if (photoData) {
     try {
       doc.save().rect(M, photoY, CONTENT_W, boxH).clip();
-      doc.image(path.join(UPLOADS_DIR, photo.stored_name), M, photoY,
+      doc.image(photoData, M, photoY,
         { cover: [CONTENT_W, boxH], align: 'center', valign: 'center' });
       doc.restore();
     } catch {

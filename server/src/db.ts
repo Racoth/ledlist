@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS screen_photos (
   mime TEXT,
   size_bytes INTEGER,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  storage TEXT NOT NULL DEFAULT 'local',
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
@@ -169,6 +170,7 @@ CREATE TABLE IF NOT EXISTS creatives (
   size_bytes INTEGER,
   duration_sec REAL,
   width INTEGER, height INTEGER,
+  storage TEXT NOT NULL DEFAULT 'local',
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
@@ -210,6 +212,15 @@ CREATE INDEX IF NOT EXISTS idx_photos_screen ON screen_photos(screen_id, sort_or
 `);
 
 // ---------- Миграции (для существующих БД) ----------
+// Где лежит файл: 'local' — диск сервера, 's3' — объектное хранилище.
+// Уже загруженные файлы остаются на диске и продолжают отдаваться оттуда.
+for (const table of ['creatives', 'screen_photos']) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.length && !cols.some((c) => c.name === 'storage')) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN storage TEXT NOT NULL DEFAULT 'local'`);
+  }
+}
+
 const screenCols = db.prepare(`PRAGMA table_info(screens)`).all() as { name: string }[];
 if (!screenCols.some((c) => c.name === 'side')) {
   db.exec(`ALTER TABLE screens ADD COLUMN side TEXT`);
