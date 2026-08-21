@@ -94,7 +94,18 @@ export default function CampaignCard() {
       <div className="summary-cards">
         <div className="scard"><div className="l">Клиент</div><div className="v" style={{ fontSize: 15 }}>{c.client_name ?? '—'}</div></div>
         <div className="scard"><div className="l">Менеджер</div><div className="v" style={{ fontSize: 15 }}>{c.manager_name ?? '—'}</div></div>
-        <div className="scard is-money"><div className="l">Размещение</div><div className="v">{fmtMoney(placement)}</div></div>
+        <div className="scard is-money">
+          <div className="l">Размещение</div>
+          <div className="v">
+            {fmtMoney(placement)}
+            {(c.discount_sum > 0 || c.discount_percent > 0) && (
+              <span className="scard-sub">
+                со скидкой{c.discount_percent > 0 ? ` −${c.discount_percent}%` : ''}
+                {c.discount_sum > 0 ? ` −${fmtMoney(c.discount_sum)}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
         <div className="scard is-money"><div className="l">Производство ролика</div><div className="v">{fmtMoney(c.production_cost)}</div></div>
         <div className="scard is-money"><div className="l">Итого</div><div className="v">{fmtMoney(total)}</div></div>
         <div className="scard is-money">

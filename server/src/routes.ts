@@ -365,13 +365,56 @@ api.post('/calc/price', (req, res) => {
 });
 
 // Пакетная проверка ёмкости + расчёт цены по списку экранов (для подбора экранов клиенту)
+/**
+ * Скидка суммой задаётся на всю продажу, а цена считается по каждому экрану.
+ * Делим её пропорционально стоимости экранов — тогда сумма частей совпадает
+ * с задуманной скидкой, а дешёвый экран не уходит в минус.
+ */
+function splitDiscount(
+  screens: any[],
+  base: { date_from: string; date_to: string; time_slot_id?: number | null; discount_percent: number },
+  discountSum: number,
+  tenantId: number,
+): Map<number, number> {
+  const shares = new Map<number, number>();
+  if (!discountSum || discountSum <= 0) return shares;
+
+  const prices = new Map<number, number>();
+  let total = 0;
+  for (const s of screens) {
+    const screenId = Number(s.screen_id);
+    const duration = Number(s.duration_sec);
+    if (!duration) continue;
+    const exists = db.prepare('SELECT id FROM screens WHERE id = ? AND tenant_id = ?').get(screenId, tenantId);
+    if (!exists) continue;
+    const calc = calcPrice({
+      screen_id: screenId, duration_sec: duration,
+      date_from: base.date_from, date_to: base.date_to,
+      time_slot_id: base.time_slot_id ?? null, discount_percent: base.discount_percent,
+    });
+    const net = calc?.net ?? 0;
+    prices.set(screenId, net);
+    total += net;
+  }
+  if (total <= 0) return shares;
+
+  const capped = Math.min(discountSum, total);   // больше стоимости скидка быть не может
+  for (const [screenId, net] of prices) {
+    shares.set(screenId, Math.round(capped * (net / total) * 100) / 100);
+  }
+  return shares;
+}
+
 api.post('/capacity/quote', (req, res) => {
   expireReservations();
   const t = tenantOf(req);
-  const { date_from, date_to, plays_per_day, time_slot_id, discount_percent, screens } = req.body ?? {};
+  const { date_from, date_to, plays_per_day, time_slot_id, discount_percent, discount_sum, screens } = req.body ?? {};
   if (!date_from || !date_to) return res.status(400).json({ error: 'Укажите период трансляции' });
   if (date_to < date_from) return res.status(400).json({ error: 'Дата окончания раньше даты начала' });
   if (!Array.isArray(screens)) return res.status(400).json({ error: 'Не передан список экранов' });
+
+  const pct = Number(discount_percent) || 0;
+  const shares = splitDiscount(screens, { date_from, date_to, time_slot_id, discount_percent: pct }, Number(discount_sum) || 0, t);
 
   const items = screens.map((s: any) => {
     const screenId = Number(s.screen_id);
@@ -382,11 +425,13 @@ api.post('/capacity/quote', (req, res) => {
     const check = checkCapacity(screenId, date_from, date_to, duration);
     const calc = calcPrice({
       screen_id: screenId, duration_sec: duration,
-      date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: Number(discount_percent) || 0,
+      date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: pct,
+      discount_sum: shares.get(screenId) ?? 0,
     });
     return {
       screen_id: screenId, code: scr.code, ok: check.ok, reason: check.reason ?? null,
       load: check.load ?? null, price: calc?.total ?? 0, days: calc?.days ?? 0,
+      discount_sum: calc?.discount_sum ?? 0,
     };
   });
   res.json({ items, total: items.reduce((a, i: any) => a + (i.ok ? i.price ?? 0 : 0), 0) });
@@ -449,7 +494,7 @@ api.post('/campaigns/bulk', (req, res) => {
   expireReservations();
   const t = tenantOf(req);
   const {
-    client_id, manager_id, discount_id, discount_percent, production_cost, comment,
+    client_id, manager_id, discount_id, discount_percent, discount_sum, production_cost, comment,
     date_from, date_to, plays_per_day, time_slot_id, status, screens,
   } = req.body ?? {};
 
@@ -460,6 +505,7 @@ api.post('/campaigns/bulk', (req, res) => {
 
   const target = status === 'draft' ? 'draft' : status === 'sold' ? 'sold' : 'reserved';
   const pct = Number(discount_percent) || 0;
+  const sum = Number(discount_sum) || 0;
 
   const items = screens.map((s: any) => ({ screen_id: Number(s.screen_id), duration_sec: Number(s.duration_sec) }));
   for (const it of items) {
@@ -485,25 +531,29 @@ api.post('/campaigns/bulk', (req, res) => {
     }
 
     const campId = db.prepare(`
-      INSERT INTO campaigns (tenant_id, number, client_id, manager_id, discount_id, discount_percent, production_cost, comment, status, reserve_until)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(t, number, client_id, manager_id ?? null, discount_id ?? null, pct,
+      INSERT INTO campaigns (tenant_id, number, client_id, manager_id, discount_id, discount_percent, discount_sum, production_cost, comment, status, reserve_until)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `).run(t, number, client_id, manager_id ?? null, discount_id ?? null, pct, sum,
       production_cost ?? 0, comment ?? null, target, reserveUntil).lastInsertRowid as number;
 
     const insertSlot = db.prepare(`
-      INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, price)
-      VALUES (?,?,?,?,?,?,?,?,?)
+      INSERT INTO ad_slots (tenant_id, campaign_id, screen_id, duration_sec, date_from, date_to, plays_per_day, time_slot_id, discount_sum, price)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
     `);
+    // Скидка суммой делится между экранами пропорционально их стоимости
+    const shares = splitDiscount(items, { date_from, date_to, time_slot_id, discount_percent: pct }, sum, t);
     let total = 0;
     for (const it of items) {
+      const share = shares.get(it.screen_id) ?? 0;
       const calc = calcPrice({
         screen_id: it.screen_id, duration_sec: it.duration_sec,
         date_from, date_to, time_slot_id: time_slot_id ?? null, discount_percent: pct,
+        discount_sum: share,
       });
       const price = calc?.total ?? 0;
       total += price;
       insertSlot.run(t, campId, it.screen_id, it.duration_sec, date_from, date_to,
-        plays_per_day ?? calc?.plays_per_day ?? 0, time_slot_id ?? null, price);
+        plays_per_day ?? calc?.plays_per_day ?? 0, time_slot_id ?? null, share, price);
     }
     return { campaign_id: campId, number, status: target, reserve_until: reserveUntil, slots: items.length, total };
   });
@@ -658,15 +708,18 @@ api.put('/slots/:id', (req, res) => {
     screen_id: next.screen_id, duration_sec: next.duration_sec,
     date_from: next.date_from, date_to: next.date_to,
     time_slot_id: next.time_slot_id, discount_percent: slot.discount_percent ?? 0,
+    // Скидка суммой закреплена за слотом: при правке длительности она не «тает»
+    discount_sum: req.body?.discount_sum !== undefined ? Number(req.body.discount_sum) : (slot.discount_sum ?? 0),
   });
   const price = req.body?.price !== undefined ? Number(req.body.price) : (calc?.total ?? slot.price);
 
   db.prepare(`
     UPDATE ad_slots SET screen_id = ?, duration_sec = ?, date_from = ?, date_to = ?,
-      time_slot_id = ?, creative_id = ?, plays_per_day = ?, price = ?
+      time_slot_id = ?, creative_id = ?, plays_per_day = ?, discount_sum = ?, price = ?
     WHERE id = ? AND tenant_id = ?
   `).run(next.screen_id, next.duration_sec, next.date_from, next.date_to,
-    next.time_slot_id, next.creative_id, calc?.plays_per_day ?? slot.plays_per_day, price, slot.id, t);
+    next.time_slot_id, next.creative_id, calc?.plays_per_day ?? slot.plays_per_day,
+    calc?.discount_sum ?? 0, price, slot.id, t);
 
   res.json(db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(slot.id));
 });

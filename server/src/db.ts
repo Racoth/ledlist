@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   reserve_until TEXT,
   discount_id INTEGER REFERENCES discounts(id),
   discount_percent REAL NOT NULL DEFAULT 0,
+  discount_sum REAL NOT NULL DEFAULT 0,
   production_cost REAL NOT NULL DEFAULT 0,
   comment TEXT
 );
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS ad_slots (
   date_to TEXT NOT NULL,
   plays_per_day INTEGER NOT NULL DEFAULT 0,
   time_slot_id INTEGER REFERENCES time_slots(id),
+  discount_sum REAL NOT NULL DEFAULT 0,
   price REAL NOT NULL DEFAULT 0
 );
 
@@ -214,6 +216,14 @@ CREATE INDEX IF NOT EXISTS idx_photos_screen ON screen_photos(screen_id, sort_or
 // ---------- Миграции (для существующих БД) ----------
 // Где лежит файл: 'local' — диск сервера, 's3' — объектное хранилище.
 // Уже загруженные файлы остаются на диске и продолжают отдаваться оттуда.
+// Скидка фиксированной суммой: в кампании — общая, в слоте — его доля
+for (const [table, col] of [['campaigns', 'discount_sum'], ['ad_slots', 'discount_sum']] as const) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.length && !cols.some((c) => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+  }
+}
+
 for (const table of ['creatives', 'screen_photos']) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (cols.length && !cols.some((c) => c.name === 'storage')) {

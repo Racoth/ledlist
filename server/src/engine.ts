@@ -211,6 +211,8 @@ export function calcPrice(params: {
   date_to: string;
   time_slot_id?: number | null;
   discount_percent?: number;
+  /** Скидка фиксированной суммой по этому слоту — применяется до налога. */
+  discount_sum?: number;
 }) {
   const screen = db.prepare(`
     SELECT s.*, t.rate AS tax_rate, t.name AS tax_name FROM screens s
@@ -232,7 +234,9 @@ export function calcPrice(params: {
   const withCoef = base * coef;
   const discountPct = params.discount_percent ?? 0;
   const discountAmount = withCoef * (discountPct / 100);
-  const net = withCoef - discountAmount;
+  // Скидка суммой идёт после процентной и не может увести цену в минус
+  const discountSum = Math.min(Math.max(params.discount_sum ?? 0, 0), withCoef - discountAmount);
+  const net = withCoef - discountAmount - discountSum;
   const taxRate = screen.tax_rate ?? 0;
   const tax = net * (taxRate / 100);
   const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -247,6 +251,7 @@ export function calcPrice(params: {
     coef,
     discount_percent: discountPct,
     discount_amount: r2(discountAmount),
+    discount_sum: r2(discountSum),
     net: r2(net),
     tax_name: screen.tax_name ?? null,
     tax_rate: taxRate,

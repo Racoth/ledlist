@@ -1141,7 +1141,7 @@ function AddClientModal(props: {
   const sale = props.mode === 'sale';
   const [dicts, setDicts] = useState<any>({ clients: [], managers: [], discounts: [], timeSlots: [] });
   const [form, setForm] = useState<any>({
-    client_id: '', manager_id: '', discount_id: '', discount_percent: 0,
+    client_id: '', manager_id: '', discount_id: '', discount_percent: 0, discount_sum: '',
     date_from: todayISO(), date_to: plusDaysISO(29),
     duration_sec: 10, time_slot_id: '', status: sale ? 'sold' : 'reserved',
   });
@@ -1173,12 +1173,13 @@ function AddClientModal(props: {
           date_from: form.date_from, date_to: form.date_to,
           time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
           discount_percent: Number(form.discount_percent) || 0,
+        discount_sum: Number(form.discount_sum) || 0,
           screens: selIds.map((id) => ({ screen_id: id, duration_sec: sel[id] })),
         }));
       } catch (e: any) { setError(e.message); }
     }, 300);
     return () => clearTimeout(timer);
-  }, [selKey, form.date_from, form.date_to, form.time_slot_id, form.discount_percent]);
+  }, [selKey, form.date_from, form.date_to, form.time_slot_id, form.discount_percent, form.discount_sum]);
 
   const available = props.screens.filter((s) => s.status === 'active');
   const shown = available.filter((s) => !q ||
@@ -1231,6 +1232,7 @@ function AddClientModal(props: {
         manager_id: form.manager_id ? Number(form.manager_id) : null,
         discount_id: form.discount_id ? Number(form.discount_id) : null,
         discount_percent: Number(form.discount_percent) || 0,
+        discount_sum: Number(form.discount_sum) || 0,
         date_from: form.date_from, date_to: form.date_to,
         time_slot_id: form.time_slot_id ? Number(form.time_slot_id) : null,
         status: form.status,
@@ -1303,6 +1305,9 @@ function AddClientModal(props: {
           }}
           hint={form.discount_percent > 0 ? `Применяется −${form.discount_percent}% к размещению` : 'Из справочника скидок'}
           options={dicts.discounts.map((d: any) => ({ value: d.id, label: `${d.name} (−${d.percent}%)` }))} />
+        <TextInput label="Скидка суммой, ₽" type="number" value={form.discount_sum}
+          onChange={(v) => setForm({ ...form, discount_sum: v })}
+          hint="Фиксированная сумма на всю продажу — разделится между экранами" />
         <SelectInput label="Длительность ролика" required value={form.duration_sec} allowEmpty={false}
           onChange={setAllDuration} hint="Применяется ко всем выбранным экранам"
           options={[5, 10, 15, 20, 30].map((v) => ({ value: v, label: `${v} сек` }))} />
@@ -1403,6 +1408,9 @@ function AddClientModal(props: {
           <dl className="kv">
             <dt>Экранов в кампании</dt><dd>{selIds.length}</dd>
             <dt>Период</dt><dd>{fmtDate(form.date_from)} — {fmtDate(form.date_to)} ({quote.items[0]?.days ?? 0} дн.)</dd>
+            {Number(form.discount_sum) > 0 && (
+              <><dt>Скидка суммой</dt><dd>−{fmtMoney(quote.items.reduce((a: number, i: any) => a + (i.discount_sum ?? 0), 0))}</dd></>
+            )}
             <dt>Стоимость размещения</dt><dd><b>{fmtMoney(total)}</b></dd>
           </dl>
         </div>
